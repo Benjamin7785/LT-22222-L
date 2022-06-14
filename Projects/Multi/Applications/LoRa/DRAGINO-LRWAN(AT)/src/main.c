@@ -76,7 +76,8 @@ bool test_uplink_status=0;
 bool uplink_data_status=0;
 bool rx_waiting_flag=0;
 bool is_time_to_IWDG_Refresh=0;
-uint8_t exit1_status=0,exit2_status=0;
+bool lora_wait_flags=0;
+bool retransmission_flag=0;
 uint8_t request_flag=0;
 uint8_t accept_flag=0;
 uint8_t ack_send_num=0;
@@ -203,8 +204,19 @@ int main( void )
 			Radio.SetChannel( tx_signal_freqence );	
 			Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );	
 			PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
-			PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );				
-			if(test_uplink_status==1)		
+			PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
+			if(retransmission_flag==1)
+			{	
+				uint32_t crc_check;
+				txDataBuff[9]= request_flag;
+				crc_check=crc32(txDataBuff,txBufferSize-4);
+				txDataBuff[txBufferSize-4] = crc_check&0xff;
+				txDataBuff[txBufferSize-3] = crc_check>>8&0xff;
+				txDataBuff[txBufferSize-2] = crc_check>>16&0xff;
+				txDataBuff[txBufferSize-1] = crc_check>>24&0xff;				
+				Radio.Send( txDataBuff, txBufferSize );						
+			}			
+			else if(test_uplink_status==1)		
 			{
 				Send_test();
 				test_uplink_status=0;
@@ -240,11 +252,6 @@ static void Send_TX( void )
 	uint32_t crc_check;
 	uint8_t i = 0;
 	
-	if(exitflag1==1)
-		exit1_status=exitflag1;
-	if(exitflag2==1)
-		exit2_status=exitflag2;
-	
 	for(uint8_t j=0;j<8;j++)
 	{
 		txDataBuff[i++] = group_id[j];
@@ -269,8 +276,9 @@ static void Send_TX( void )
 	if(accept_flag!=0)
 	accept_flag=0;
 	
+	DI1_flag=HAL_GPIO_ReadPin(GPIO_EXTI_PORT,GPIO_EXTI_PIN);	
 	txDataBuff[i++]=1<<4 | DI1_flag;	
-	if((request_flag!=0)&&(exit1_status==1))
+	if((exitflag1==1)&&(request_flag!=0))
 	{
 		txDataBuff[i++]=DIonetoDO;
 		txDataBuff[i++]=DIonetoRO;
@@ -281,8 +289,9 @@ static void Send_TX( void )
 		txDataBuff[i++]=0x00;		
 	}
 	
+	DI2_flag=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);	
 	txDataBuff[i++]=2<<4 | DI2_flag;	
-	if((request_flag!=0)&&(exit2_status==1))
+	if((exitflag2==1)&&(request_flag!=0))
 	{
 		txDataBuff[i++]=DItwotoDO;
 		txDataBuff[i++]=DItwotoRO;
@@ -345,23 +354,47 @@ static void RxData(lora_AppData_t *AppData)
 					
 	if((AppData->BuffSize == 9)&&(AppData->Buff[2] != 0)) //received ack of Group RX
 	{
-		if((group_mode==0)&&(group_mode_id==0))  //One to one
+		uint8_t ack_id=0,request_num=0;
+		if((group_mode==0)&&(group_mode_id==0))  //point to point
 		{
 			request_flag=0;
 		}
-		else                                    //One to many
+		else                                    //point to multi-point
 		{
-			request_flag=request_flag&(~(AppData->Buff[2]));
+			request_flag=request_flag&(~(AppData->Buff[2]));			
+			for(uint8_t k=0;k<8;k++)
+			{
+				if((request_flag&(1<<k))!=0)
+				{
+					request_num++;
+				}
+				
+				if((AppData->Buff[2]&(1<<k))!=0)
+				{
+					ack_id=k+1;
+				}
+			}	
 		}
+		
+		if(lora_wait_flags==1)
+		{
+			if(AppData->Buff[0]==0x00)
+			{
+				PPRINTF("Received ACK Group ID, sub-id: 0\r\n");			
+			}
+			else
+			{
+				PPRINTF("Received ACK Group ID, sub-id: %d. Expected ACK : %d, Recevied ACK %d\r\n",ack_id,group_mode_id,group_mode_id-request_num);
+			}	
+		}		
 		
 		if(request_flag==0)
 		{
 			TimerStop( &AckTimer );
-			ack_send_num=0;	
-			exit1_status=0;
-			exit2_status=0;
+			ack_send_num=0;
+			lora_wait_flags=0;	
+			retransmission_flag=0;			
 		}
-		PPRINTF("Received ACK to Group RX,ACK is %d\r\n",request_flag);		
 	}
 	
 	uint8_t rece_temp=0;
@@ -477,11 +510,11 @@ static void RxData(lora_AppData_t *AppData)
 							}					
 						}
 						
-						if((group_mode==1)&&(group_mode_id>=1)&&(group_mode_id<=8))   //One to many
+						if((group_mode==1)&&(group_mode_id>=1)&&(group_mode_id<=8))   //point to multi-point
 						{
 							accept_flag=(1<<(group_mode_id-1));
 						}
-						else                                                        //One to one
+						else                                                        //point to point
 						{
 							accept_flag=1;
 						}
@@ -491,7 +524,7 @@ static void RxData(lora_AppData_t *AppData)
 						for(uint8_t j=0;j<group_mode_id-1;j++)
 						{
 							IWDG_Refresh();
-							HAL_Delay((group_mode_id-1)*2500);
+							HAL_Delay(2500);
 						}
 				  }
 				}
@@ -527,6 +560,8 @@ static void OnAckEvent( void )
 	{
 		TimerStop( &AckTimer );
 		ack_send_num=0;
+		lora_wait_flags=0;	
+		retransmission_flag=0;
 	}
 	else
 	{
@@ -537,6 +572,7 @@ static void OnAckEvent( void )
 		TimerStart( &AckTimer );
 		uplinkcount--;
 		uplink_data_status=1;
+		retransmission_flag=1;
 	}		
 }
 
@@ -568,7 +604,6 @@ static void send_exti(void)
 		{	
 			if((group_mode==0)&&((DIonetoDO!=0)||(DIonetoRO!=0)))
 			{
-				DI1_flag=HAL_GPIO_ReadPin(GPIO_EXTI_PORT,GPIO_EXTI_PIN);
 				uplink_data_status=1;
 				if((group_mode==0)&&(group_mode_id!=0))
 				{
@@ -579,6 +614,7 @@ static void send_exti(void)
 				else
 					TimerSetValue( &AckTimer,  30000 );
 				TimerStart( &AckTimer );
+				lora_wait_flags=1;
 			}
 			else
 			{
@@ -593,7 +629,6 @@ static void send_exti(void)
 	  {	
 			if((group_mode==0)&&((DItwotoDO!=0)||(DItwotoRO!=0)))
 			{
-				DI2_flag=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);
 				uplink_data_status=1;
 				if((group_mode==0)&&(group_mode_id!=0))
 				{
@@ -604,6 +639,7 @@ static void send_exti(void)
 				else
 					TimerSetValue( &AckTimer,  30000 );
 				TimerStart( &AckTimer );
+				lora_wait_flags=1;
 			}
       else
 			{
@@ -671,19 +707,19 @@ static void test_OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t
 
 static void test_OnTxTimeout( void )
 {
-    PPRINTF("OnTxTimeout\n\r");
-	  Radio.Sleep( );
-	  rx_waiting_flag=1;
+  PPRINTF("OnTxTimeout\n\r");
+  Radio.Sleep( );
+	rx_waiting_flag=1;
 }
 
 static void test_OnRxTimeout( void )
 {
-    PPRINTF("OnRxTimeout\n\r");
+  PPRINTF("OnRxTimeout\n\r");
 }
 
 static void test_OnRxError( void )
 {
-    PPRINTF("OnRxError\n\r");
+  PPRINTF("OnRxError\n\r");
 }
 
 static uint32_t crc32(uint8_t *data,uint16_t length) //CRC_32/ADCCP
