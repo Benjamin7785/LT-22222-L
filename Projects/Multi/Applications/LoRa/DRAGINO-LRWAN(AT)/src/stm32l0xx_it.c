@@ -69,6 +69,7 @@ Maintainer: Miguel Luis and Gregory Cristian
 extern uint16_t intdelay1,intdelay2;
 extern uint32_t COUNT1;
 extern uint32_t COUNT2;
+extern bool sleep_status;
 bool exitflag1=0,exitflag2=0;
 
 void LoraStartdelay1(void);
@@ -288,19 +289,32 @@ void EXTI4_15_IRQHandler( void )
 
 	if(__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_12) != RESET) 
 	{	
-		if(intdelay2==0)
-		{
-			exitflag2=1;							
-		}
-		else
+		if(sleep_status==1)
 		{
 		  if(intput_flgs2==0)
 			{
-				status2=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);
-				TimerSetValue(&exdelay2Timer,intdelay2); 
-				TimerStart(&exdelay2Timer);
-				intput_flgs2=1;
-			}		
+				status2=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);			
+				TimerSetValue(&exdelay2Timer,500); 
+				TimerStart(&exdelay2Timer);		
+			}
+			intput_flgs2=1;				
+		}	
+		else
+		{
+			if(intdelay2==0)
+			{
+				exitflag2=1;							
+			}
+			else
+			{
+				if(intput_flgs2==0)
+				{
+					status2=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);
+					TimerSetValue(&exdelay2Timer,intdelay2); 
+					TimerStart(&exdelay2Timer);
+					intput_flgs2=1;
+				}		
+			}
 		}
 		__HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_12);
 		HAL_GPIO_EXTI_Callback(GPIO_PIN_12);

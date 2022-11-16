@@ -57,6 +57,8 @@
 bool fdr_flag=0;
 bool sync_value;
 bool group_mode;
+bool sleep_status=0;
+bool sync1_begin=0,sync2_begin=0;
 uint8_t group_mode_id;
 uint8_t txp_value;
 uint8_t preamble_value;
@@ -69,6 +71,9 @@ uint32_t rx_signal_freqence;
 uint32_t APP_TX_DUTYCYCLE;
 uint8_t intmode1,intmode2;
 uint16_t intdelay1,intdelay2;
+uint16_t inttime1,inttime2;
+uint16_t DI1toDO1_time,DI1toRO1_time,DI2toDO2_time,DI2toRO2_time;
+uint8_t DO1_init,DO2_init,RO1_init,RO2_init;
 uint8_t group_id[8];
 uint32_t Automatic_join_network[1]={0x11};
 
@@ -76,6 +81,8 @@ static uint8_t config_count=0;
 static uint32_t s_config[32]; //store config
 
 extern uint8_t DIonetoDO,DIonetoRO,DItwotoDO,DItwotoRO;
+extern uint8_t befor_RODO;
+
 /**
  *  lora Init
  */
@@ -118,11 +125,13 @@ void fdr_config(void)
 	preamble_value=8;
 	txp_value=14;
 	codingrate_value=1;
-	APP_TX_DUTYCYCLE=600000;
+	APP_TX_DUTYCYCLE=3600000;
 	tx_spreading_value=12;
 	rx_spreading_value=12;
 	tx_signal_freqence=868700000;
 	rx_signal_freqence=869000000;
+		
+	count_clean();
 	
 	EEPROM_Store_Config();
 	EEPROM_Read_Config();	
@@ -150,6 +159,16 @@ void EEPROM_Store_Config(void)
 
 	s_config[config_count++]=(DIonetoDO<<24) | (DIonetoRO<<16) | (DItwotoDO<<8) | DItwotoRO;
 	
+	s_config[config_count++]=(sync2_begin<<24) | (sync1_begin<<16) | (sleep_status<<8) | befor_RODO;
+	
+	s_config[config_count++]=(inttime1<<16) | inttime2;
+
+  s_config[config_count++]=(DI1toDO1_time<<16) | DI1toRO1_time;
+	
+	s_config[config_count++]=(DI2toDO2_time<<16) | DI2toRO2_time;
+
+	s_config[config_count++]=(DO1_init<<24)| (DO2_init<<16) | (RO1_init<<8) | RO2_init;
+
   EEPROM_program(EEPROM_USER_START_ADDR_CONFIG,s_config,config_count);//store config
 	
 	config_count=0;
@@ -157,10 +176,10 @@ void EEPROM_Store_Config(void)
 
 void EEPROM_Read_Config(void)
 {
-	uint32_t star_address=0,r_config[10];
+	uint32_t star_address=0,r_config[15];
 	
 	star_address=EEPROM_USER_START_ADDR_CONFIG;
-	for(int i=0;i<10;i++)
+	for(int i=0;i<15;i++)
 	{
 	  r_config[i]=FLASH_read(star_address);
 		star_address+=4;
@@ -220,7 +239,35 @@ void EEPROM_Read_Config(void)
 	
 	DItwotoDO=(r_config[9]>>8)&0xFF;
 	
-	DItwotoRO=r_config[9]&0xFF;		
+	DItwotoRO=r_config[9]&0xFF;	
+
+	sync2_begin=(r_config[10]>>24)&0xFF;	
+	
+	sync1_begin=(r_config[10]>>16)&0xFF;	
+		
+  sleep_status=(r_config[10]>>8)&0xFF;	
+	
+  befor_RODO=r_config[10]&0xFF;	
+	
+	inttime1=(r_config[11]>>16)&0xFFFF; 
+	
+	inttime2=r_config[11]&0xFFFF;
+	
+	DI1toDO1_time=(r_config[12]>>16)&0xFFFF; 
+	
+	DI1toRO1_time=r_config[12]&0xFFFF;
+	
+	DI2toDO2_time=(r_config[13]>>16)&0xFFFF; 
+	
+	DI2toRO2_time=r_config[13]&0xFFFF;
+	
+	DO1_init=(r_config[14]>>24)&0xFF; 
+	
+	DO2_init=(r_config[14]>>16)&0xFF; 
+	
+	RO1_init=(r_config[14]>>8)&0xFF; 
+	
+	RO2_init=r_config[14]&0xFF; 
 }
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
 

@@ -67,6 +67,8 @@
 /**
  * @brief Max size of the data that can be received
  */
+extern TimerEvent_t syncDI1Timer;
+extern TimerEvent_t syncDI2Timer; 
 extern uint8_t testBuff[256];
 extern uint16_t testBuffsize;
 extern bool test_uplink_status;
@@ -86,11 +88,20 @@ extern uint32_t rx_signal_freqence;
 extern uint32_t APP_TX_DUTYCYCLE;
 extern uint8_t intmode1,intmode2;
 extern uint16_t intdelay1,intdelay2;
+extern uint16_t inttime1,inttime2;
+extern uint16_t DI1toDO1_time,DI1toRO1_time,DI2toDO2_time,DI2toRO2_time;
+extern uint8_t DO1_init,DO2_init,RO1_init,RO2_init;
 extern uint8_t group_id[8];
 extern uint8_t DIonetoDO,DIonetoRO,DItwotoDO,DItwotoRO;
 extern uint32_t uplinkcount;
 extern uint32_t downlinkcount;
 extern bool sending_flag;
+extern uint8_t befor_RODO;
+extern bool sleep_status;
+extern uint32_t FLASH_USER_COUNT_START_ADDR;
+extern uint32_t FLASH_USER_COUNT_END_ADDR;
+extern uint32_t Address;
+extern bool sync1_begin,sync2_begin;
 
 extern uint32_t APP_TX_DUTYCYCLE;
 extern TimerEvent_t TxTimer;
@@ -470,13 +481,18 @@ ATEerror_t at_trig1_set(const char *param)
 {
 	uint8_t int_temp=0;
 	uint16_t time=0;
-	if (tiny_sscanf(param, "%hhd,%hu",&int_temp, &time) != 2)
-  {
-		if (tiny_sscanf(param, "%hhd",&int_temp) != 1)
+	uint16_t tran_time=0;
+	
+	if (tiny_sscanf(param, "%d,%d,%d",&int_temp, &time, &tran_time) != 3)
+  {	
+		if (tiny_sscanf(param, "%hhd,%hu",&int_temp, &time) != 2)
 		{
-			return AT_PARAM_ERROR;
+			if (tiny_sscanf(param, "%hhd",&int_temp) != 1)
+			{
+				return AT_PARAM_ERROR;
+			}
 		}
-  }
+	}
 	
   if(int_temp>2)
 	{
@@ -492,6 +508,12 @@ ATEerror_t at_trig1_set(const char *param)
 
 	intmode1=int_temp;
 	intdelay1=time;
+	inttime1=tran_time;
+	if(inttime1==0)
+	{
+		sync1_begin=0;
+		TimerStop( &syncDI1Timer );
+	}
   GPIO_EXTI_DI1_IoInit(intmode1);	
 	
 	return AT_OK;	
@@ -499,7 +521,14 @@ ATEerror_t at_trig1_set(const char *param)
 
 ATEerror_t at_trig1_get(const char *param)
 {
-	AT_PRINTF("%d,%u\r\n",intmode1,intdelay1);	
+	if(inttime1!=0)
+	{
+		AT_PRINTF("%d,%d,%d\r\n",intmode1,intdelay1,inttime1);	
+	}
+	else
+	{
+		AT_PRINTF("%d,%d\r\n",intmode1,intdelay1);			
+	}
 	
 	return AT_OK;		
 }
@@ -508,14 +537,18 @@ ATEerror_t at_trig2_set(const char *param)
 {
 	uint8_t int_temp=0;
 	uint16_t time=0;
+	uint16_t tran_time=0;
 	
-	if (tiny_sscanf(param, "%hhd,%hu",&int_temp, &time) != 2)
-  {
-		if (tiny_sscanf(param, "%hhd",&int_temp) != 1)
+	if (tiny_sscanf(param, "%d,%d,%d",&int_temp, &time, &tran_time) != 3)
+  {		
+		if (tiny_sscanf(param, "%hhd,%hu",&int_temp, &time) != 2)
 		{
-			return AT_PARAM_ERROR;
+			if (tiny_sscanf(param, "%hhd",&int_temp) != 1)
+			{
+				return AT_PARAM_ERROR;
+			}
 		}
-  }
+	}
 	
   if(int_temp>2)
 	{
@@ -531,14 +564,31 @@ ATEerror_t at_trig2_set(const char *param)
 		
 	intmode2=int_temp;
 	intdelay2=time;
-	GPIO_EXTI_DI2_IoInit(intmode2);	
-		
+	inttime2=tran_time;
+	if(inttime2==0)
+	{
+		sync2_begin=0;
+		TimerStop( &syncDI2Timer );
+	}	
+	
+	if(sleep_status==0)
+	{
+		GPIO_EXTI_DI2_IoInit(intmode2);	
+	}
+	
 	return AT_OK;			
 }
 
 ATEerror_t at_trig2_get(const char *param)
 {
-	AT_PRINTF("%d,%u\r\n",intmode2,intdelay2);			
+	if(inttime2!=0)
+	{
+		AT_PRINTF("%d,%d,%d\r\n",intmode2,intdelay2,inttime2);	
+	}
+	else
+	{
+		AT_PRINTF("%d,%d\r\n",intmode2,intdelay2);			
+	}
 	
 	return AT_OK;			
 }
@@ -546,15 +596,20 @@ ATEerror_t at_trig2_get(const char *param)
 ATEerror_t at_pinDI1topinDO1_set(const char *param)
 {
 	uint8_t temp=0;
-	
-	if (tiny_sscanf(param, "%d", &temp) != 1)
-  {
-    return AT_PARAM_ERROR;
-  }
+	uint16_t time_tmp=0;
+
+	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+  {	
+		if (tiny_sscanf(param, "%d", &temp) != 1)
+		{
+			return AT_PARAM_ERROR;
+		}
+	}
 	
 	if(temp<=3)
 	{
-		DIonetoDO=temp;  
+		DIonetoDO=temp; 
+    DI1toDO1_time=time_tmp;		
 	}
 	else
 	{
@@ -566,7 +621,14 @@ ATEerror_t at_pinDI1topinDO1_set(const char *param)
 
 ATEerror_t at_pinDI1topinDO1_get(const char *param)
 {
-	AT_PRINTF("%d\r\n",DIonetoDO);		
+	if(DI1toDO1_time!=0)
+	{
+		AT_PRINTF("%d,%d\r\n",DIonetoDO,DI1toDO1_time);		
+	}
+	else
+	{
+		AT_PRINTF("%d\r\n",DIonetoDO);		
+	}
 	
 	return AT_OK;			
 }
@@ -574,15 +636,20 @@ ATEerror_t at_pinDI1topinDO1_get(const char *param)
 ATEerror_t at_pinDI1topinRO1_set(const char *param)
 {
 	uint8_t temp=0;
-	
-	if (tiny_sscanf(param, "%d", &temp) != 1)
-  {
-    return AT_PARAM_ERROR;
+	uint16_t time_tmp=0;
+
+	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+  {	
+		if (tiny_sscanf(param, "%d", &temp) != 1)
+		{
+			return AT_PARAM_ERROR;
+		}
   }
 	
 	if(temp<=3)
 	{
 		DIonetoRO=temp;
+		DI1toRO1_time=time_tmp;
 	}
 	else
 	{
@@ -594,7 +661,14 @@ ATEerror_t at_pinDI1topinRO1_set(const char *param)
 
 ATEerror_t at_pinDI1topinRO1_get(const char *param)
 {
-	AT_PRINTF("%d\r\n",DIonetoRO);	
+	if(DI1toRO1_time!=0)
+	{
+		AT_PRINTF("%d,%d\r\n",DIonetoRO,DI1toRO1_time);	
+	}
+	else
+	{	
+		AT_PRINTF("%d\r\n",DIonetoRO);	
+	}
 	
 	return AT_OK;			
 }
@@ -602,15 +676,20 @@ ATEerror_t at_pinDI1topinRO1_get(const char *param)
 ATEerror_t at_pinDI2topinDO2_set(const char *param)
 {
 	uint8_t temp=0;
-	
-	if (tiny_sscanf(param, "%d", &temp) != 1)
-  {
-    return AT_PARAM_ERROR;
-  }
+	uint16_t time_tmp=0;
+
+	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+  {		
+		if (tiny_sscanf(param, "%d", &temp) != 1)
+		{
+			return AT_PARAM_ERROR;
+		}
+	}
 	
 	if(temp<=3)
 	{
 		DItwotoDO=temp;
+		DI2toDO2_time=time_tmp;
 	}
 	else
 	{
@@ -622,7 +701,14 @@ ATEerror_t at_pinDI2topinDO2_set(const char *param)
 
 ATEerror_t at_pinDI2topinDO2_get(const char *param)
 {
-	AT_PRINTF("%d\r\n",DItwotoDO);		
+	if(DI2toDO2_time!=0)
+	{
+		AT_PRINTF("%d,%d\r\n",DItwotoDO,DI2toDO2_time);	
+	}
+	else
+	{	
+		AT_PRINTF("%d\r\n",DItwotoDO);		
+	}
 	
 	return AT_OK;			
 }
@@ -630,15 +716,20 @@ ATEerror_t at_pinDI2topinDO2_get(const char *param)
 ATEerror_t at_pinDI2topinRO2_set(const char *param)
 {
 	uint8_t temp=0;
-	
-	if (tiny_sscanf(param, "%d", &temp) != 1)
-  {
-    return AT_PARAM_ERROR;
-  }
+	uint16_t time_tmp=0;
+
+	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+  {			
+		if (tiny_sscanf(param, "%d", &temp) != 1)
+		{
+			return AT_PARAM_ERROR;
+		}
+	}
 	
 	if(temp<=3)
 	{
 		DItwotoRO=temp;
+		DI2toRO2_time=time_tmp;
 	}
 	else
 	{
@@ -650,7 +741,60 @@ ATEerror_t at_pinDI2topinRO2_set(const char *param)
 
 ATEerror_t at_pinDI2topinRO2_get(const char *param)
 {
-	AT_PRINTF("%d\r\n",DItwotoRO);			
+	if(DI2toRO2_time!=0)
+	{
+		AT_PRINTF("%d,%d\r\n",DItwotoRO,DI2toRO2_time);			
+	}
+	else
+	{	
+		AT_PRINTF("%d\r\n",DItwotoRO);			
+	}
+	
+	return AT_OK;			
+}
+
+ATEerror_t at_dorosave_set(const char *param)
+{
+	uint8_t temp=0;
+	uint8_t sta1=0,sta2=0,sta3=0,sta4=0;
+
+	if (tiny_sscanf(param, "%d,%d,%d,%d,%d", &temp, &sta1, &sta2, &sta3, &sta4) != 5)
+  {	
+		if (tiny_sscanf(param, "%d", &temp) != 1)
+		{
+			return AT_PARAM_ERROR;
+		}
+	}	
+	
+	if(temp<=2)
+	{
+		befor_RODO=temp;
+		if(befor_RODO==2)
+		{
+			DO1_init=sta1;
+			DO2_init=sta2;
+			RO1_init=sta3;
+			RO2_init=sta4;
+		}
+	}
+	else
+	{
+		return AT_PARAM_ERROR;		
+	}
+	
+	return AT_OK;			
+}
+
+ATEerror_t at_dorosave_get(const char *param)
+{
+	if(befor_RODO==2)
+	{
+		AT_PRINTF("%d,%d,%d,%d,%d\r\n",befor_RODO,DO1_init,DO2_init,RO1_init,RO2_init);			
+	}
+	else
+	{
+		AT_PRINTF("%d\r\n",befor_RODO);		
+	}
 	
 	return AT_OK;			
 }
@@ -724,6 +868,42 @@ ATEerror_t at_groupid_get(const char *param)
 	return AT_OK;		
 }
 
+ATEerror_t at_di2sleep_set(const char *param)
+{
+	uint8_t temp=0;
+	
+	if (tiny_sscanf(param, "%d", &temp) != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
+	
+	if(temp<=1)
+	{
+		sleep_status=temp;
+		if(sleep_status==0)
+		{
+			GPIO_EXTI_DI2_IoInit(intmode2); 	
+		}
+		else
+		{
+			GPIO_EXTI_DI2_IoInit(2); 			
+		}		
+	}
+	else
+	{
+		return AT_PARAM_ERROR;			
+	}
+	
+	return AT_OK;		
+}
+
+ATEerror_t at_di2sleep_get(const char *param)
+{
+	PPRINTF("%d\r\n",sleep_status);
+		
+	return AT_OK;	
+}
+
 ATEerror_t at_Send(const char *param)
 {
   const char *buf= param;
@@ -759,4 +939,26 @@ ATEerror_t at_Send(const char *param)
   test_uplink_status=1;
 	
   return AT_OK;
+}
+
+void count_clean(void)
+{
+	uint16_t i=0; 
+		
+	uint32_t current_address11;
+		
+	__IO uint32_t data_on_add11 = 0;
+		
+	current_address11=FLASH_USER_COUNT_START_ADDR;
+	data_on_add11=*(__IO uint32_t *)current_address11;
+	while(current_address11+(i*16*8)<FLASH_USER_COUNT_END_ADDR) 
+	{
+		data_on_add11=*(__IO uint32_t *)(current_address11+(i*16*8));
+		if(data_on_add11!=0x00)
+		{
+			FLASH_erase(current_address11+(i*16*8));
+		}
+		i++;
+	}
+	Address=FLASH_USER_COUNT_START_ADDR;
 }

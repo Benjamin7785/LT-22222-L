@@ -103,6 +103,8 @@ typedef enum eATEerror
 #define AT_DI1TORO1   "+DI1TORO1"
 #define AT_DI2TODO2   "+DI2TODO2"
 #define AT_DI2TORO2   "+DI2TORO2"
+#define AT_DOROSAVE   "+DOROSAVE"
+#define AT_DI2SLEEP   "+DI2SLEEP"
 #define AT_SEND       "+SEND"
 #define AT_VER        "+VER"
 #define AT_CFG        "+CFG"
@@ -147,13 +149,19 @@ ATEerror_t at_pinDI2topinDO2_set(const char *param);
 ATEerror_t at_pinDI2topinDO2_get(const char *param);
 ATEerror_t at_pinDI2topinRO2_set(const char *param);
 ATEerror_t at_pinDI2topinRO2_get(const char *param);
+ATEerror_t at_dorosave_set(const char *param);
+ATEerror_t at_dorosave_get(const char *param);
 ATEerror_t at_groupmode_set(const char *param);
 ATEerror_t at_groupmode_get(const char *param);
 ATEerror_t at_groupid_set(const char *param);
 ATEerror_t at_groupid_get(const char *param);
+ATEerror_t at_di2sleep_set(const char *param);
+ATEerror_t at_di2sleep_get(const char *param);
 ATEerror_t at_Send(const char *param);
 ATEerror_t at_version_get(const char *param);
 ATEerror_t at_CFG_run(const char *param);
+
+void count_clean(void);
 
 #ifdef __cplusplus
 }

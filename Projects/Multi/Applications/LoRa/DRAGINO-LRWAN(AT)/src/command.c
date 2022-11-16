@@ -340,6 +340,28 @@ static const struct ATCommand_s ATCommand[] =
     .run = at_return_error,
 	},
 
+		{
+	  .string = AT_DOROSAVE,
+    .size_string = sizeof(AT_DOROSAVE) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_DOROSAVE ":Get or Set the read saved DORO state after reset\r\n",
+#endif
+    .get = at_dorosave_get,
+    .set = at_dorosave_set,
+    .run = at_return_error,
+	},
+
+		{
+	  .string = AT_DI2SLEEP,
+    .size_string = sizeof(AT_DI2SLEEP) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_DI2SLEEP ":Get or Set LT into sleep mode by DI2\r\n",
+#endif
+    .get = at_di2sleep_get,
+    .set = at_di2sleep_set,
+    .run = at_return_error,
+	},
+	
   {
     .string = AT_SEND,
     .size_string = sizeof(AT_SEND) - 1,
