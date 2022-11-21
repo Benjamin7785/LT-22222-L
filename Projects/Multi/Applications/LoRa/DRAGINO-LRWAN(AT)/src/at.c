@@ -90,6 +90,7 @@ extern uint8_t intmode1,intmode2;
 extern uint16_t intdelay1,intdelay2;
 extern uint16_t inttime1,inttime2;
 extern uint16_t DI1toDO1_time,DI1toRO1_time,DI2toDO2_time,DI2toRO2_time;
+extern uint8_t DI1toDO1_statu,DI1toRO1_statu,DI2toDO2_statu,DI2toRO2_statu;
 extern uint8_t DO1_init,DO2_init,RO1_init,RO2_init;
 extern uint8_t group_id[8];
 extern uint8_t DIonetoDO,DIonetoRO,DItwotoDO,DItwotoRO;
@@ -597,19 +598,24 @@ ATEerror_t at_pinDI1topinDO1_set(const char *param)
 {
 	uint8_t temp=0;
 	uint16_t time_tmp=0;
+  uint8_t status_temp=0;
 
-	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
-  {	
-		if (tiny_sscanf(param, "%d", &temp) != 1)
-		{
-			return AT_PARAM_ERROR;
+	if (tiny_sscanf(param, "%d,%d,%d", &temp,&time_tmp,&status_temp) != 3)
+  {		
+		if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+		{	
+			if (tiny_sscanf(param, "%d", &temp) != 1)
+			{
+				return AT_PARAM_ERROR;
+			}
 		}
 	}
 	
-	if(temp<=3)
+	if((temp<=3)&&(status_temp<=3))
 	{
 		DIonetoDO=temp; 
     DI1toDO1_time=time_tmp;		
+		DI1toDO1_statu=status_temp;
 	}
 	else
 	{
@@ -623,7 +629,7 @@ ATEerror_t at_pinDI1topinDO1_get(const char *param)
 {
 	if(DI1toDO1_time!=0)
 	{
-		AT_PRINTF("%d,%d\r\n",DIonetoDO,DI1toDO1_time);		
+		AT_PRINTF("%d,%d,%d\r\n",DIonetoDO,DI1toDO1_time,DI1toDO1_statu);		
 	}
 	else
 	{
@@ -637,19 +643,24 @@ ATEerror_t at_pinDI1topinRO1_set(const char *param)
 {
 	uint8_t temp=0;
 	uint16_t time_tmp=0;
+  uint8_t status_temp=0;
 
-	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
-  {	
-		if (tiny_sscanf(param, "%d", &temp) != 1)
-		{
-			return AT_PARAM_ERROR;
+	if (tiny_sscanf(param, "%d,%d,%d", &temp,&time_tmp,&status_temp) != 3)
+  {		
+		if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+		{	
+			if (tiny_sscanf(param, "%d", &temp) != 1)
+			{
+				return AT_PARAM_ERROR;
+			}
 		}
-  }
+	}
 	
-	if(temp<=3)
+	if((temp<=3)&&(status_temp<=3))
 	{
 		DIonetoRO=temp;
 		DI1toRO1_time=time_tmp;
+		DI1toRO1_statu=status_temp;
 	}
 	else
 	{
@@ -663,7 +674,7 @@ ATEerror_t at_pinDI1topinRO1_get(const char *param)
 {
 	if(DI1toRO1_time!=0)
 	{
-		AT_PRINTF("%d,%d\r\n",DIonetoRO,DI1toRO1_time);	
+		AT_PRINTF("%d,%d,%d\r\n",DIonetoRO,DI1toRO1_time,DI1toRO1_statu);	
 	}
 	else
 	{	
@@ -677,19 +688,24 @@ ATEerror_t at_pinDI2topinDO2_set(const char *param)
 {
 	uint8_t temp=0;
 	uint16_t time_tmp=0;
+  uint8_t status_temp=0;
 
-	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+	if (tiny_sscanf(param, "%d,%d,%d", &temp,&time_tmp,&status_temp) != 3)
   {		
-		if (tiny_sscanf(param, "%d", &temp) != 1)
-		{
-			return AT_PARAM_ERROR;
+		if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+		{		
+			if (tiny_sscanf(param, "%d", &temp) != 1)
+			{
+				return AT_PARAM_ERROR;
+			}
 		}
 	}
 	
-	if(temp<=3)
+	if((temp<=3)&&(status_temp<=3))
 	{
 		DItwotoDO=temp;
 		DI2toDO2_time=time_tmp;
+		DI2toDO2_statu=status_temp;
 	}
 	else
 	{
@@ -703,7 +719,7 @@ ATEerror_t at_pinDI2topinDO2_get(const char *param)
 {
 	if(DI2toDO2_time!=0)
 	{
-		AT_PRINTF("%d,%d\r\n",DItwotoDO,DI2toDO2_time);	
+		AT_PRINTF("%d,%d,%d\r\n",DItwotoDO,DI2toDO2_time,DI2toDO2_statu);	
 	}
 	else
 	{	
@@ -717,19 +733,24 @@ ATEerror_t at_pinDI2topinRO2_set(const char *param)
 {
 	uint8_t temp=0;
 	uint16_t time_tmp=0;
+  uint8_t status_temp=0;
 
-	if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
-  {			
-		if (tiny_sscanf(param, "%d", &temp) != 1)
-		{
-			return AT_PARAM_ERROR;
+	if (tiny_sscanf(param, "%d,%d,%d", &temp,&time_tmp,&status_temp) != 3)
+  {	
+		if (tiny_sscanf(param, "%d,%d", &temp,&time_tmp) != 2)
+		{			
+			if (tiny_sscanf(param, "%d", &temp) != 1)
+			{
+				return AT_PARAM_ERROR;
+			}
 		}
 	}
 	
-	if(temp<=3)
+	if((temp<=3)&&(status_temp<=3))
 	{
 		DItwotoRO=temp;
 		DI2toRO2_time=time_tmp;
+		DI2toRO2_statu=status_temp;
 	}
 	else
 	{
@@ -743,7 +764,7 @@ ATEerror_t at_pinDI2topinRO2_get(const char *param)
 {
 	if(DI2toRO2_time!=0)
 	{
-		AT_PRINTF("%d,%d\r\n",DItwotoRO,DI2toRO2_time);			
+		AT_PRINTF("%d,%d,%d\r\n",DItwotoRO,DI2toRO2_time,DI2toRO2_statu);			
 	}
 	else
 	{	

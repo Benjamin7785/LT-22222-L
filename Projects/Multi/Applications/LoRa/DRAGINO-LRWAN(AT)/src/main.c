@@ -120,6 +120,7 @@ extern uint8_t intmode1,intmode2;
 extern uint8_t DO1_init,DO2_init,RO1_init,RO2_init;
 extern uint16_t inttime1,inttime2;
 extern uint16_t DI1toDO1_time,DI1toRO1_time,DI2toDO2_time,DI2toRO2_time;
+extern uint8_t DI1toDO1_statu,DI1toRO1_statu,DI2toDO2_statu,DI2toRO2_statu;
 extern bool sleep_status;
 extern bool sync1_begin,sync2_begin;
 
@@ -618,7 +619,7 @@ static void RxData(lora_AppData_t *AppData)
 						{
 							if(AppData->Buff[4]<=3)
 							{
-								if(DI1toDO1_time!=0)
+								if((DI1toDO1_time!=0)&&(DI1toDO1_statu!=0))
 								{
 									originalstatus[0]=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
 									TimerSetValue( &DooutputONETimer, DI1toDO1_time*1000);  
@@ -653,7 +654,7 @@ static void RxData(lora_AppData_t *AppData)
 						
 						if(AppData->Buff[7]!=0x00)
 						{
-							if(DI2toDO2_time!=0)
+							if((DI2toDO2_time!=0)&&(DI2toDO2_statu!=0))
 							{
 								originalstatus[1]=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);
 								TimerSetValue( &DooutputTWOTimer, DI2toDO2_time*1000);  
@@ -687,7 +688,7 @@ static void RxData(lora_AppData_t *AppData)
 						
 						if(AppData->Buff[5]!=0x00)
 						{
-							if(DI1toRO1_time!=0)
+							if((DI1toRO1_time!=0)&&(DI1toRO1_statu!=0))
 							{
 								originalstatus[2]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 								TimerSetValue( &RelayONETimer, DI1toRO1_time*1000);  
@@ -721,7 +722,7 @@ static void RxData(lora_AppData_t *AppData)
 						
 						if(AppData->Buff[8]!=0x00)
 						{
-							if(DI2toRO2_time!=0)
+							if((DI2toRO2_time!=0)&&(DI2toRO2_statu!=0))
 							{
 								originalstatus[3]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);	
 								TimerSetValue( &RelayTWOTimer, DI2toRO2_time*1000);  
@@ -923,9 +924,22 @@ static void OndownlinkTimeoutEvent(void)
 static void DooutputONETimeoutEvent(void)
 {
 	TimerStop( &DooutputONETimer);		
-	turn_flag[0]=1;				
-	HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,originalstatus[0]);				
-	DO1_flag=originalstatus[0];
+	turn_flag[0]=1;		
+  if(DI1toDO1_statu==1)
+	{		
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET);				
+		DO1_flag=0;
+	}
+  else if(DI1toDO1_statu==2)
+	{		
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET);				
+		DO1_flag=1;
+	}	
+  else if(DI1toDO1_statu==3)
+	{		
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,originalstatus[0]);				
+		DO1_flag=originalstatus[0];
+	}
 }
 
 static void DooutputONE_return(void)
@@ -936,9 +950,22 @@ static void DooutputONE_return(void)
 static void DooutputTWOTimeoutEvent(void)
 {	
 	TimerStop( &DooutputTWOTimer);	
-	turn_flag[1]=1;								
-	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,originalstatus[1]);
-	DO2_flag=originalstatus[1];					
+	turn_flag[1]=1;
+  if(DI2toDO2_statu==1)	
+	{
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_RESET);
+		DO2_flag=0;				
+	}		
+  else if(DI2toDO2_statu==2)	
+	{
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_SET);
+		DO2_flag=1;				
+	}			
+  else if(DI2toDO2_statu==3)	
+	{
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,originalstatus[1]);
+		DO2_flag=originalstatus[1];				
+	}		
 }
 
 static void DooutputTWO_return(void)
@@ -950,8 +977,21 @@ static void RelayONETimeoutEvent(void)
 {
 	TimerStop( &RelayONETimer);		
 	turn_flag[2]=1;
-	HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO1_PIN,originalstatus[2]);
-	RO1_flag=originalstatus[2];
+	if(DI1toRO1_statu==1)
+	{
+		HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO1_PIN,GPIO_PIN_RESET);
+		RO1_flag=0;
+	}
+	else if(DI1toRO1_statu==2)
+	{
+		HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO1_PIN,GPIO_PIN_SET);
+		RO1_flag=1;
+	}	
+	else if(DI1toRO1_statu==3)
+	{
+		HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO1_PIN,originalstatus[2]);
+		RO1_flag=originalstatus[2];
+	}
 }
 
 static void RelayONE_return(void)
@@ -962,9 +1002,22 @@ static void RelayONE_return(void)
 static void RelayTWOTimeoutEvent(void)
 {	
 	TimerStop( &RelayTWOTimer);	
-	turn_flag[3]=1;		
-	HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO2_PIN,originalstatus[3]);
-	RO2_flag=originalstatus[3];					
+	turn_flag[3]=1;
+  if(DI2toRO2_statu==1)
+	{		
+		HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO2_PIN,GPIO_PIN_RESET);
+		RO2_flag=0;	
+	}
+  else if(DI2toRO2_statu==2)
+	{		
+		HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO2_PIN,GPIO_PIN_SET);
+		RO2_flag=1;	
+	}	
+  else if(DI2toRO2_statu==3)
+	{		
+		HAL_GPIO_WritePin(Relay_GPIO_PORT,Relay_RO2_PIN,originalstatus[3]);
+		RO2_flag=originalstatus[3];	
+	}		
 }
 
 static void RelayTWO_return(void)

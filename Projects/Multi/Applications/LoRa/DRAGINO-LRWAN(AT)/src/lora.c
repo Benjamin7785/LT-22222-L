@@ -73,6 +73,7 @@ uint8_t intmode1,intmode2;
 uint16_t intdelay1,intdelay2;
 uint16_t inttime1,inttime2;
 uint16_t DI1toDO1_time,DI1toRO1_time,DI2toDO2_time,DI2toRO2_time;
+uint8_t DI1toDO1_statu,DI1toRO1_statu,DI2toDO2_statu,DI2toRO2_statu;
 uint8_t DO1_init,DO2_init,RO1_init,RO2_init;
 uint8_t group_id[8];
 uint32_t Automatic_join_network[1]={0x11};
@@ -169,6 +170,8 @@ void EEPROM_Store_Config(void)
 
 	s_config[config_count++]=(DO1_init<<24)| (DO2_init<<16) | (RO1_init<<8) | RO2_init;
 
+	s_config[config_count++]=(DI1toDO1_statu<<24) | (DI1toRO1_statu<<16) | (DI2toDO2_statu<<8) | DI2toRO2_statu;
+
   EEPROM_program(EEPROM_USER_START_ADDR_CONFIG,s_config,config_count);//store config
 	
 	config_count=0;
@@ -176,10 +179,10 @@ void EEPROM_Store_Config(void)
 
 void EEPROM_Read_Config(void)
 {
-	uint32_t star_address=0,r_config[15];
+	uint32_t star_address=0,r_config[16];
 	
 	star_address=EEPROM_USER_START_ADDR_CONFIG;
-	for(int i=0;i<15;i++)
+	for(int i=0;i<16;i++)
 	{
 	  r_config[i]=FLASH_read(star_address);
 		star_address+=4;
@@ -268,6 +271,14 @@ void EEPROM_Read_Config(void)
 	RO1_init=(r_config[14]>>8)&0xFF; 
 	
 	RO2_init=r_config[14]&0xFF; 
+	
+	DI1toDO1_statu=(r_config[15]>>24)&0xFF;
+	
+	DI1toRO1_statu=(r_config[15]>>16)&0xFF;
+	
+	DI2toDO2_statu=(r_config[15]>>8)&0xFF;
+	
+	DI2toRO2_statu=r_config[15]&0xFF;
 }
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
 
