@@ -384,8 +384,8 @@ static void Send_TX( void )
 	
 	if((exitflag1==1)&&(request_flag!=0))
 	{
-		txDataBuff[i++]=DIonetoDO;
-		txDataBuff[i++]=DIonetoRO;
+		txDataBuff[i++]=0x04;
+		txDataBuff[i++]=0x04;
 	}
 	else
 	{
@@ -407,8 +407,8 @@ static void Send_TX( void )
 	
 	if((exitflag2==1)&&(request_flag!=0))
 	{
-		txDataBuff[i++]=DItwotoDO;
-		txDataBuff[i++]=DItwotoRO;
+		txDataBuff[i++]=0x04;
+		txDataBuff[i++]=0x04;
 	}
 	else
 	{
@@ -467,8 +467,8 @@ static void Send_sync( void )
 	txDataBuff[i++]=1<<4 | DI1_flag;
   if(syncDI1_flag==1)	
 	{
-		txDataBuff[i++]=DIonetoDO;
-		txDataBuff[i++]=DIonetoRO;
+		txDataBuff[i++]=0x04;
+		txDataBuff[i++]=0x04;
 		syncDI1_flag=0;
   }
 	else
@@ -481,8 +481,8 @@ static void Send_sync( void )
 	txDataBuff[i++]=2<<4 | DI2_flag;	
 	if(syncDI2_flag==1)
 	{		
-		txDataBuff[i++]=DItwotoDO;
-		txDataBuff[i++]=DItwotoRO;
+		txDataBuff[i++]=0x04;
+		txDataBuff[i++]=0x04;
 		syncDI2_flag=0;
 	}
 	else
@@ -617,54 +617,45 @@ static void RxData(lora_AppData_t *AppData)
 						
 						if(AppData->Buff[4]!=0x00)
 						{
-							if(AppData->Buff[4]<=3)
+							AppData->Buff[4]=DIonetoDO;
+
+							if((DI1toDO1_time!=0)&&(DI1toDO1_statu!=0))
 							{
-								if((DI1toDO1_time!=0)&&(DI1toDO1_statu!=0))
-								{
-									originalstatus[0]=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
-									TimerSetValue( &DooutputONETimer, DI1toDO1_time*1000);  
-									TimerStart( &DooutputONETimer);										
-								}
+								originalstatus[0]=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
+								TimerSetValue( &DooutputONETimer, DI1toDO1_time*1000);  
+								TimerStart( &DooutputONETimer);										
+							}
 								
-								if(DIonetoDO!=0)
-								{
-									AppData->Buff[4]=DIonetoDO;
-								}
-								
-								if(AppData->Buff[4]==1)
-								{
-									if(level_status1==1)
-										HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET); 
-									else if(level_status1==0)
-										HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET); 
-								}
-								else if(AppData->Buff[4]==2)
-								{
-									if(level_status1==1)
-										HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET); 
-									else if(level_status1==0)
-										HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET); 
-								}
-								else if(AppData->Buff[4]==3)
-								{
-									HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_12);
-								}
+							if(AppData->Buff[4]==1)
+							{
+								if(level_status1==1)
+									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET); 
+								else if(level_status1==0)
+									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET); 
+							}
+							else if(AppData->Buff[4]==2)
+							{
+								if(level_status1==1)
+									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET); 
+								else if(level_status1==0)
+									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET); 
+							}
+							else if(AppData->Buff[4]==3)
+							{
+								HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_12);
 							}
 						}
 						
 						if(AppData->Buff[7]!=0x00)
 						{
+							AppData->Buff[7]=DItwotoDO;			
+							
 							if((DI2toDO2_time!=0)&&(DI2toDO2_statu!=0))
 							{
 								originalstatus[1]=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);
 								TimerSetValue( &DooutputTWOTimer, DI2toDO2_time*1000);  
 								TimerStart( &DooutputTWOTimer);							
-							}
-							
-							if(DItwotoDO!=0)
-							{
-								AppData->Buff[7]=DItwotoDO;
-							}				
+							}			
 							
 							if(AppData->Buff[7]==1)
 							{
@@ -688,16 +679,13 @@ static void RxData(lora_AppData_t *AppData)
 						
 						if(AppData->Buff[5]!=0x00)
 						{
+							AppData->Buff[5]=DIonetoRO;
+							
 							if((DI1toRO1_time!=0)&&(DI1toRO1_statu!=0))
 							{
 								originalstatus[2]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 								TimerSetValue( &RelayONETimer, DI1toRO1_time*1000);  
 								TimerStart( &RelayONETimer);								
-							}
-							
-							if(DIonetoRO!=0)
-							{
-								AppData->Buff[5]=DIonetoRO;
 							}
 								
 							if(AppData->Buff[5]==1)
@@ -722,16 +710,13 @@ static void RxData(lora_AppData_t *AppData)
 						
 						if(AppData->Buff[8]!=0x00)
 						{
+							AppData->Buff[8]=DItwotoRO;	
+							
 							if((DI2toRO2_time!=0)&&(DI2toRO2_statu!=0))
 							{
 								originalstatus[3]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);	
 								TimerSetValue( &RelayTWOTimer, DI2toRO2_time*1000);  
 								TimerStart( &RelayTWOTimer);									
-							}
-							
-							if(DItwotoRO!=0)
-							{
-								AppData->Buff[8]=DItwotoRO;
 							}
 							
 							if(AppData->Buff[8]==1)
@@ -1031,7 +1016,7 @@ static void send_exti(void)
 	{	
 	  if(sending_flag ==0)
 		{	
-			if((group_mode==0)&&((DIonetoDO!=0)||(DIonetoRO!=0)))
+			if(group_mode==0)
 			{
 				uplink_data_status=1;
 				lora_wait_flags=1;				
@@ -1147,7 +1132,7 @@ static void send_exti(void)
 		{
 			if(sending_flag ==0)
 			{	
-				if((group_mode==0)&&((DItwotoDO!=0)||(DItwotoRO!=0)))
+				if(group_mode==0)
 				{
 					uplink_data_status=1;
 					lora_wait_flags=1;				
