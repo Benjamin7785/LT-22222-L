@@ -284,6 +284,7 @@ int main( void )
 				{
 					Send_sync();
 					syncDI1DI2_send_flag=0;
+					exitflag1=0;
 				}
 				else if(retransmission_flag==1)
 				{	
@@ -294,12 +295,14 @@ int main( void )
 					txDataBuff[txBufferSize-3] = crc_check>>8&0xff;
 					txDataBuff[txBufferSize-2] = crc_check>>16&0xff;
 					txDataBuff[txBufferSize-1] = crc_check>>24&0xff;				
-					Radio.Send( txDataBuff, txBufferSize );						
+					Radio.Send( txDataBuff, txBufferSize );
+					exitflag1=0;					
 				}			
 				else if(test_uplink_status==1)		
 				{
 					Send_test();
 					test_uplink_status=0;
+					exitflag1=0;
 				}				
 				else
 				{
