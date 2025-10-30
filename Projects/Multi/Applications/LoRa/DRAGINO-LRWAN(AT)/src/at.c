@@ -96,7 +96,16 @@ extern uint8_t group_id[8];
 extern uint8_t DIonetoDO,DIonetoRO,DItwotoDO,DItwotoRO;
 extern uint32_t uplinkcount;
 extern uint32_t downlinkcount;
-extern bool sending_flag;
+// OLD CODE - Race condition prone
+// extern bool sending_flag;
+
+// NEW CODE - Use atomic radio state management
+extern volatile radio_state_t radio_state;
+extern bool radio_is_idle(void);
+
+// NEW CODE - Test function declaration
+extern void test_run_comprehensive_test(void);
+
 extern uint8_t befor_RODO;
 extern bool sleep_status;
 extern uint32_t FLASH_USER_COUNT_START_ADDR;
@@ -430,7 +439,14 @@ ATEerror_t at_version_get(const char *param)
 
 ATEerror_t at_CFG_run(const char *param)
 {
-	if(sending_flag==1)
+	// OLD CODE - Race condition prone
+	// if(sending_flag==1)
+	// {
+	//     return AT_BUSY_ERROR;
+	// }
+	
+	// NEW CODE - Use atomic radio state check
+	if(!radio_is_idle())
 	{
 		return AT_BUSY_ERROR;
 	}
@@ -460,10 +476,18 @@ ATEerror_t at_TDC_set(const char *param)
     return AT_PARAM_ERROR;
   }
 	
-	if(txtimeout<6000)
+	// OLD CODE - Enforced minimum 6 second interval
+	// if(txtimeout<6000)
+	// {
+	// 	PRINTF("TDC setting must be more than 6S\n\r");
+	// 	APP_TX_DUTYCYCLE=6000;
+	// 	return AT_PARAM_ERROR;
+	// }
+	
+	// NEW CODE - Allow 0 to disable automatic TX (for DI1/DI2 only mode)
+	if(txtimeout > 0 && txtimeout < 6000)
 	{
-		PRINTF("TDC setting must be more than 6S\n\r");
-		APP_TX_DUTYCYCLE=6000;
+		PRINTF("TDC setting must be 0 (disabled) or >= 6000ms\n\r");
 		return AT_PARAM_ERROR;
 	}
 	
@@ -932,7 +956,14 @@ ATEerror_t at_Send(const char *param)
   unsigned size=0;
   char hex[3];
 
-	if(sending_flag==1)
+	// OLD CODE - Race condition prone
+	// if(sending_flag==1)
+	// {
+	//     return AT_BUSY_ERROR;
+	// }
+	
+	// NEW CODE - Use atomic radio state check
+	if(!radio_is_idle())
 	{
 		return AT_BUSY_ERROR;
 	}
@@ -982,4 +1013,115 @@ void count_clean(void)
 		i++;
 	}
 	Address=FLASH_USER_COUNT_START_ADDR;
+}
+
+// NEW CODE - Stop radio command implementation
+ATEerror_t at_STOP_run(const char *param)
+{
+	AT_PRINTF("Stopping radio operations...\r\n");
+	radio_force_idle();
+	AT_PRINTF("Radio stopped. System idle.\r\n");
+	AT_PRINTF("You can now run AT+TEST\r\n");
+	
+	return AT_OK;
+}
+
+// NEW CODE - Preset configuration command
+ATEerror_t at_PRESET_run(const char *param)
+{
+	AT_PRINTF("Loading preset configuration...\r\n");
+	
+	// Radio parameters
+	txp_value = 20;
+	sync_value = 1;
+	preamble_value = 8;
+	
+	// TX/RX Frequencies and Spreading Factors
+	tx_signal_freqence = 869000000;
+	tx_spreading_value = 12;
+	rx_signal_freqence = 868700000;
+	rx_spreading_value = 12;
+	
+	// Modulation
+	bandwidth_value = 0;
+	codingrate_value = 1;
+	
+	// Timing
+	APP_TX_DUTYCYCLE = 0;  // Event-driven mode
+	
+	// Trigger configuration
+	intmode1 = 2;      // Both edges
+	intdelay1 = 250;   // 250ms debounce
+	inttime1 = 0;
+	
+	intmode2 = 2;      // Both edges
+	intdelay2 = 250;   // 250ms debounce
+	inttime2 = 0;
+	
+	// Group configuration
+	group_mode = 0;
+	group_mode_id = 0;
+	
+	// Group ID
+	group_id[0] = '1';
+	group_id[1] = '2';
+	group_id[2] = '3';
+	group_id[3] = '4';
+	group_id[4] = '5';
+	group_id[5] = '6';
+	group_id[6] = '7';
+	group_id[7] = '8';
+	
+	// DI to DO/RO mapping
+	DI1toDO1_statu = 2;
+	DI1toRO1_statu = 2;
+	DI2toDO2_statu = 2;
+	DI2toRO2_statu = 2;
+	
+	DI1toDO1_time = 0;
+	DI1toRO1_time = 0;
+	DI2toDO2_time = 0;
+	DI2toRO2_time = 0;
+	
+	// Output save mode
+	befor_RODO = 2;
+	DO1_init = 0;
+	DO2_init = 0;
+	RO1_init = 0;
+	RO2_init = 0;
+	
+	// Sleep mode
+	sleep_status = 0;
+	
+	// Save to EEPROM
+	EEPROM_Store_Config();
+	
+	AT_PRINTF("Preset configuration loaded!\r\n");
+	AT_PRINTF("Configuration:\r\n");
+	AT_PRINTF("  TX: %lu Hz, SF%d\r\n", tx_signal_freqence, tx_spreading_value);
+	AT_PRINTF("  RX: %lu Hz, SF%d\r\n", rx_signal_freqence, rx_spreading_value);
+	AT_PRINTF("  Group ID: %c%c%c%c%c%c%c%c\r\n", 
+	          group_id[0], group_id[1], group_id[2], group_id[3],
+	          group_id[4], group_id[5], group_id[6], group_id[7]);
+	AT_PRINTF("  TDC: %lu ms (0=event-driven)\r\n", APP_TX_DUTYCYCLE);
+	AT_PRINTF("\r\nReset device (ATZ) to apply.\r\n");
+	
+	return AT_OK;
+}
+
+// NEW CODE - Test command implementation
+ATEerror_t at_TEST_run(const char *param)
+{
+	// Check if radio is idle before running tests
+	if(!radio_is_idle())
+	{
+		AT_PRINTF("Radio busy, cannot run tests\r\n");
+		AT_PRINTF("Send AT+STOP first to stop radio operations\r\n");
+		return AT_BUSY_ERROR;
+	}
+	
+	AT_PRINTF("Starting comprehensive test suite...\r\n");
+	test_run_comprehensive_test();
+	
+	return AT_OK;
 }

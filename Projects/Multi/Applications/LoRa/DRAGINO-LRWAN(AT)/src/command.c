@@ -393,7 +393,43 @@ static const struct ATCommand_s ATCommand[] =
     .get = at_return_error,
     .set = at_return_error,
 		.run = at_CFG_run,
-	},			
+	},
+	
+	// NEW CODE - Test command for enhanced radio communication validation
+	{
+	  .string = AT_TEST,
+    .size_string = sizeof(AT_TEST) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_TEST ": Run comprehensive test suite for radio communication\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_return_error,
+		.run = at_TEST_run,
+	},
+	
+	// NEW CODE - Stop radio command to allow testing
+	{
+	  .string = AT_STOP,
+    .size_string = sizeof(AT_STOP) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_STOP ": Stop radio operations to enter idle/test mode\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_return_error,
+		.run = at_STOP_run,
+	},
+	
+	// NEW CODE - Preset configuration command
+	{
+	  .string = AT_PRESET,
+    .size_string = sizeof(AT_PRESET) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_PRESET ": Load preset configuration (SF12, 868.7/869MHz, event-driven)\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_return_error,
+		.run = at_PRESET_run,
+	},
 };
 
 

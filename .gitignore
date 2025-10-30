@@ -1,1 +1,95 @@
-Projects/Multi/Applications/LoRa/DRAGINO-LRWAN(AT)/MDK-ARM/STM32L072CZ-Nucleo/sx1276mb1las/*
+# Keil MDK-ARM build artifacts
+*.o
+*.d
+*.crf
+*.lst
+*.map
+*.axf
+*.htm
+*.lnp
+*.bak
+*.dep
+*.uvguix.*
+*.uvoptx
+*.scvd
+*.iex
+*.__i
+*.fed
+DebugConfig/
+RTE/
+Listings/
+Objects/
+
+# Build output directories
+*/Debug/
+*/Release/
+*_build/
+build/
+
+# Keil project user files (keep project files, ignore user settings)
+*.uvguix
+*.uvgui.*
+JLinkLog.txt
+JLinkSettings.ini
+
+# STM32CubeIDE / Eclipse
+.metadata/
+.settings/
+.project
+.cproject
+*.launch
+Debug/
+Release/
+
+# GCC build artifacts
+*.elf
+*.bin
+*.hex
+*.map
+*.su
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Logs
+*.log
+
+# Binary output (keep source .hex only if needed)
+# Comment out next line if you want to track compiled .hex files
+*.hex
+
+# Preprocessor output
+*.i
+*.ii
+
+# Python cache (if any scripts)
+__pycache__/
+*.pyc
+
+# Documentation build artifacts
+*.chm
+_htmresc/
+
+# Keep important files
+!*.c
+!*.h
+!*.s
+!*.ld
+!*.icf
+!Makefile
+!*.md
+!*.txt
+!*.bat
+
+# Specific: Keep the main hex file but ignore build outputs
+!LT22222-L_PingPong_v*.hex

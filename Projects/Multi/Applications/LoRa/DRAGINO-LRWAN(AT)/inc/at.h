@@ -54,6 +54,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include <stdint.h>
+#include <stdbool.h>
 
 /* Exported types ------------------------------------------------------------*/
 /*
@@ -73,6 +74,16 @@ typedef enum eATEerror
   AT_RX_ERROR,
   AT_MAX,
 } ATEerror_t;
+
+// NEW CODE - Radio state management types
+typedef enum {
+    RADIO_STATE_IDLE = 0,
+    RADIO_STATE_TX_PREPARING,
+    RADIO_STATE_TX_ACTIVE,
+    RADIO_STATE_RX_PREPARING,
+    RADIO_STATE_RX_ACTIVE,
+    RADIO_STATE_ERROR
+} radio_state_t;
 
 /* Exported constants --------------------------------------------------------*/
 /* External variables --------------------------------------------------------*/
@@ -108,6 +119,9 @@ typedef enum eATEerror
 #define AT_SEND       "+SEND"
 #define AT_VER        "+VER"
 #define AT_CFG        "+CFG"
+#define AT_TEST       "+TEST"
+#define AT_STOP       "+STOP"
+#define AT_PRESET     "+PRESET"
 
 ATEerror_t at_return_ok(const char *param);
 ATEerror_t at_return_error(const char *param);
@@ -160,6 +174,14 @@ ATEerror_t at_di2sleep_get(const char *param);
 ATEerror_t at_Send(const char *param);
 ATEerror_t at_version_get(const char *param);
 ATEerror_t at_CFG_run(const char *param);
+ATEerror_t at_TEST_run(const char *param);
+ATEerror_t at_STOP_run(const char *param);
+ATEerror_t at_PRESET_run(const char *param);
+
+// NEW CODE - Radio state management function declarations
+bool radio_is_idle(void);
+void test_run_comprehensive_test(void);
+void radio_force_idle(void);
 
 void count_clean(void);
 
