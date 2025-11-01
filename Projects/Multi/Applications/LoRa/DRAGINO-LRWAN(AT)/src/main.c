@@ -505,7 +505,19 @@ int main( void )
 				sending_flag=1;
 				Radio.SetChannel( tx_signal_freqence );	
 				Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );	
-				PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
+				static uint32_t last_printed_counter = 0;
+				uint32_t prev_counter = uplinkcount;
+				uplinkcount++;
+				
+				// Detect if we skipped printing any TXs (UART overflow or silent TXs)
+				if(last_printed_counter > 0 && prev_counter != last_printed_counter + 1)
+				{
+					PPRINTF("\r\n!!! MISSED %u TXs (last printed: %u, current: %u) !!!\r\n", 
+					        prev_counter - last_printed_counter - 1, last_printed_counter, prev_counter);
+				}
+				last_printed_counter = uplinkcount;
+				
+				PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount );
 				PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
 				
 				// Transition to TX_ACTIVE state after radio configured, before sending
