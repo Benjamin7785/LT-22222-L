@@ -84,6 +84,19 @@ static uint32_t s_config[32]; //store config
 extern uint8_t DIonetoDO,DIonetoRO,DItwotoDO,DItwotoRO;
 extern uint8_t befor_RODO;
 
+// NEW v1.6.0: Watchdog system
+typedef struct {
+    bool enabled;
+    uint8_t interval_seconds;
+    uint8_t missed_count;
+    uint8_t max_missed;
+    uint32_t last_received_time;
+    bool link_active;
+    bool safe_state_active;
+} watchdog_t;
+
+extern watchdog_t watchdog;
+
 /**
  *  lora Init
  */
@@ -171,6 +184,9 @@ void EEPROM_Store_Config(void)
 	s_config[config_count++]=(DO1_init<<24)| (DO2_init<<16) | (RO1_init<<8) | RO2_init;
 
 	s_config[config_count++]=(DI1toDO1_statu<<24) | (DI1toRO1_statu<<16) | (DI2toDO2_statu<<8) | DI2toRO2_statu;
+	
+	// NEW v1.6.0: Store watchdog configuration
+	s_config[config_count++]=(watchdog.enabled<<24) | (watchdog.interval_seconds<<16) | (watchdog.max_missed<<8);
 
   EEPROM_program(EEPROM_USER_START_ADDR_CONFIG,s_config,config_count);//store config
 	
@@ -179,10 +195,10 @@ void EEPROM_Store_Config(void)
 
 void EEPROM_Read_Config(void)
 {
-	uint32_t star_address=0,r_config[16];
+	uint32_t star_address=0,r_config[17];  // Expanded to 17 for watchdog config
 	
 	star_address=EEPROM_USER_START_ADDR_CONFIG;
-	for(int i=0;i<16;i++)
+	for(int i=0;i<17;i++)  // Read 17 elements now
 	{
 	  r_config[i]=FLASH_read(star_address);
 		star_address+=4;
@@ -279,6 +295,21 @@ void EEPROM_Read_Config(void)
 	DI2toDO2_statu=(r_config[15]>>8)&0xFF;
 	
 	DI2toRO2_statu=r_config[15]&0xFF;
+	
+	// NEW v1.6.0: Load watchdog configuration
+	watchdog.enabled = ((r_config[16]>>24)&0xFF) ? true : false;
+	watchdog.interval_seconds = (r_config[16]>>16)&0xFF;
+	watchdog.max_missed = (r_config[16]>>8)&0xFF;
+	
+	// Validate and apply defaults if invalid
+	if(watchdog.interval_seconds < 10 || watchdog.interval_seconds > 300)
+	{
+		watchdog.interval_seconds = 50;  // Default 50s
+	}
+	if(watchdog.max_missed == 0 || watchdog.max_missed > 10)
+	{
+		watchdog.max_missed = 3;  // Default 3 misses
+	}
 }
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
 

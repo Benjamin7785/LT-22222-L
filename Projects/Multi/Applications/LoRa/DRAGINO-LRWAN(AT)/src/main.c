@@ -505,7 +505,10 @@ int main( void )
 				sending_flag=1;
 				Radio.SetChannel( tx_signal_freqence );	
 				Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );	
-				PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
+				uint32_t tx_time = HAL_GetTick();
+				uint32_t counter_before = uplinkcount;
+				uplinkcount++;
+				PPRINTF("\r\n***** UpLinkCounter= %u (was %u) at %lu ms *****\n\r", uplinkcount, counter_before, tx_time );
 				PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
 				
 				// Transition to TX_ACTIVE state after radio configured, before sending
@@ -649,6 +652,7 @@ static void Send_TX( void )
 	
 	if(accept_flag==0)
 	{
+		// TRANSMITTER: Send DI states
 		// CRITICAL FIX: Use queued state if available, otherwise read current GPIO
 		if(use_queued_di_states && exitflag1==1)
 		{
@@ -663,9 +667,12 @@ static void Send_TX( void )
 	}
 	else
 	{
-		DO1_flag=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
-		DO2_flag=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);	
-		txDataBuff[i++]= DO1_flag<<4 | 	DO2_flag;		
+		// RECEIVER FEEDBACK: Send RO states only (DO is local, not shared)
+		// NEW ARCHITECTURE: Receiver DO outputs are local-only, only RO is sent in feedback
+		RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
+		RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);
+		txDataBuff[i++]= RO1_flag<<4 | RO2_flag;  // Send RO1/RO2, not DO1/DO2
+		PPRINTF("Feedback byte 3: RO1=%d, RO2=%d (DOs are local)\r\n", RO1_flag, RO2_flag);
 	}
 	
 	if((exitflag1==1)&&(request_flag!=0))
@@ -905,49 +912,52 @@ static void RxData(lora_AppData_t *AppData)
 			{
 				PPRINTF("DEBUG: Before feedback processing - queue pending: %d\r\n", di_queue_has_pending());
 				
-				// Correct parsing based on actual packet format
-				// Byte 3: DO1_flag<<4 | DO2_flag
-				uint8_t received_DO1 = (AppData->Buff[3] & 0xf0) >> 4;
-				uint8_t received_DO2 = (AppData->Buff[3] & 0x0f);
+				// NEW ARCHITECTURE: Receiver sends only RO states (DO is local on receiver)
+				// Byte 3: RO1_flag<<4 | RO2_flag (changed from DO1/DO2)
+				uint8_t received_RO1_byte3 = (AppData->Buff[3] & 0xf0) >> 4;
+				uint8_t received_RO2_byte3 = (AppData->Buff[3] & 0x0f);
 				
-				// Byte 6: RO1_flag<<4 | RO2_flag  
-				uint8_t received_RO1 = (AppData->Buff[6] & 0xf0) >> 4;
-				uint8_t received_RO2 = (AppData->Buff[6] & 0x0f);
+				// Byte 6: RO1_flag<<4 | RO2_flag (redundant for verification)
+				uint8_t received_RO1_byte6 = (AppData->Buff[6] & 0xf0) >> 4;
+				uint8_t received_RO2_byte6 = (AppData->Buff[6] & 0x0f);
+				
+				// Use byte 3 values (or verify against byte 6 for corruption detection)
+				uint8_t received_RO1 = received_RO1_byte3;
+				uint8_t received_RO2 = received_RO2_byte3;
 				
 				PPRINTF("\r\n=== FEEDBACK RECEIVED ===\r\n");
-				PPRINTF("Remote DO1: %d → Mirroring to local DO1\r\n", received_DO1);
-				PPRINTF("Remote DO2: %d → Mirroring to local DO2\r\n", received_DO2);
-				PPRINTF("Remote RO1: %d → Mirroring to local RO1\r\n", received_RO1);
-				PPRINTF("Remote RO2: %d → Mirroring to local RO2\r\n", received_RO2);
+				PPRINTF("Remote RO1: %d → Mirroring to local DO1/RO1\r\n", received_RO1);
+				PPRINTF("Remote RO2: %d → Mirroring to local DO2/RO2\r\n", received_RO2);
+				PPRINTF("(Receiver's DOs are local-only, not sent in feedback)\r\n");
 				
-				// NEW CODE - Mirror receiver's DO/RO states to transmitter's DO/RO outputs
-				// Update transmitter's DO1
-				if(received_DO1 == 1)
+				// NEW ARCHITECTURE - Mirror receiver's RO states to transmitter's DO/RO outputs
+				// Transmitter's DO1 mirrors receiver's RO1
+				if(received_RO1 == 1)
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);
 				else
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
 				
-				// Update transmitter's DO2
-				if(received_DO2 == 1)
+				// Transmitter's DO2 mirrors receiver's RO2
+				if(received_RO2 == 1)
 					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
 				else
 					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
 				
-				// Update transmitter's RO1
+				// Transmitter's RO1 mirrors receiver's RO1
 				if(received_RO1 == 1)
 					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_SET);
 				else
 					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);
 				
-				// Update transmitter's RO2
+				// Transmitter's RO2 mirrors receiver's RO2
 				if(received_RO2 == 1)
 					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_SET);
 				else
 					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
 				
 				// Update local state variables
-				DO1_flag = received_DO1;
-				DO2_flag = received_DO2;
+				DO1_flag = received_RO1;  // Transmitter DO mirrors receiver RO
+				DO2_flag = received_RO2;
 				RO1_flag = received_RO1;
 				RO2_flag = received_RO2;
 				
@@ -1018,133 +1028,83 @@ static void RxData(lora_AppData_t *AppData)
 				    relay_1=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);		
             relay_2=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);							
 				
-						uint8_t level_status1,level_status2;
-						level_status1=AppData->Buff[3]&0x0f;
-						level_status2=AppData->Buff[6]&0x0f;	
-						
-						if(AppData->Buff[4]!=0x00)
+					uint8_t level_status1,level_status2;
+					level_status1=AppData->Buff[3]&0x0f;
+					level_status2=AppData->Buff[6]&0x0f;	
+					
+					// NEW ARCHITECTURE: Receiver DO outputs are now LOCAL-ONLY (not controlled by transmitter)
+					// DO1 and DO2 are reserved for local receiver functions:
+					//   - DO2: Watchdog safe state indication (blinking/solid)
+					//   - DO1: Available for future local functions
+					// Only RO1 and RO2 are controlled by transmitter's DI states
+					
+					PPRINTF("Decoupled architecture: DOs are local, only ROs controlled remotely\r\n");
+					PPRINTF("Packet DI states: DI1=%d (level_status1=%d), DI2=%d (level_status2=%d)\r\n",
+					        (AppData->Buff[3]>>4)&0x0f, level_status1, (AppData->Buff[6]>>4)&0x0f, level_status2);
+					
+					// Extract DI states from packet
+					uint8_t DI1_received = level_status1;  // DI1 state from transmitter
+					uint8_t DI2_received = level_status2;  // DI2 state from transmitter
+					
+					// CRITICAL: ALWAYS apply DI→RO mapping (immediate state sync)
+					// This ensures receiver RO mirrors transmitter DI
+					if(DIonetoRO != 0)
+					{
+						if(DIonetoRO == 1)  // Direct mapping: DI1=1 → RO1=1
+							HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, DI1_received ? GPIO_PIN_SET : GPIO_PIN_RESET);
+						else if(DIonetoRO == 2)  // Inverse mapping: DI1=1 → RO1=0
+							HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, DI1_received ? GPIO_PIN_RESET : GPIO_PIN_SET);
+						else if(DIonetoRO == 3)  // Toggle on DI1=1
 						{
-							AppData->Buff[4]=DIonetoDO;
-
-							if((DI1toDO1_time!=0)&&(DI1toDO1_statu!=0))
-							{
-								originalstatus[0]=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
-								TimerSetValue( &DooutputONETimer, DI1toDO1_time*1000);  
-								TimerStart( &DooutputONETimer);										
-							}
-								
-							if(AppData->Buff[4]==1)
-							{
-								if(level_status1==1)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET); 
-								else if(level_status1==0)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET); 
-							}
-							else if(AppData->Buff[4]==2)
-							{
-								if(level_status1==1)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_RESET); 
-								else if(level_status1==0)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_12,GPIO_PIN_SET); 
-							}
-							else if(AppData->Buff[4]==3)
-							{
-								HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_12);
-							}
+							if(DI1_received == 1)
+								HAL_GPIO_TogglePin(Relay_GPIO_PORT, Relay_RO1_PIN);
 						}
-						
-						if(AppData->Buff[7]!=0x00)
+						PPRINTF("RO1 mapped from DI1=%d (mapping=%d)\r\n", DI1_received, DIonetoRO);
+					}
+					
+					if(DItwotoRO != 0)
+					{
+						if(DItwotoRO == 1)  // Direct mapping: DI2=1 → RO2=1
+							HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, DI2_received ? GPIO_PIN_SET : GPIO_PIN_RESET);
+						else if(DItwotoRO == 2)  // Inverse mapping: DI2=1 → RO2=0
+							HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, DI2_received ? GPIO_PIN_RESET : GPIO_PIN_SET);
+						else if(DItwotoRO == 3)  // Toggle on DI2=1
 						{
-							AppData->Buff[7]=DItwotoDO;			
-							
-							if((DI2toDO2_time!=0)&&(DI2toDO2_statu!=0))
-							{
-								originalstatus[1]=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);
-								TimerSetValue( &DooutputTWOTimer, DI2toDO2_time*1000);  
-								TimerStart( &DooutputTWOTimer);							
-							}			
-							
-							if(AppData->Buff[7]==1)
-							{
-								if(level_status2==1)
-									HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_SET); 
-								else if(level_status2==0)
-									HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_RESET); 
-							}
-							else if(AppData->Buff[7]==2)
-							{
-								if(level_status2==1)
-									HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_RESET); 
-								else if(level_status2==0)
-									HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_SET); 
-							}
-							else if(AppData->Buff[7]==3)
-							{
-								HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_14);
-							}					
+							if(DI2_received == 1)
+								HAL_GPIO_TogglePin(Relay_GPIO_PORT, Relay_RO2_PIN);
 						}
+						PPRINTF("RO2 mapped from DI2=%d (mapping=%d)\r\n", DI2_received, DItwotoRO);
+					}
+					
+					// Process DI1 trigger (for TIMER feature only)
+					if(AppData->Buff[5]!=0x00)
+					{
+						PPRINTF("DI1 trigger detected (Buff[5]=0x%02x)\r\n", AppData->Buff[5]);
 						
-						if(AppData->Buff[5]!=0x00)
+						// Start revert timer if configured
+						if((DI1toRO1_time!=0)&&(DI1toRO1_statu!=0))
 						{
-							AppData->Buff[5]=DIonetoRO;
-							
-							if((DI1toRO1_time!=0)&&(DI1toRO1_statu!=0))
-							{
-								originalstatus[2]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
-								TimerSetValue( &RelayONETimer, DI1toRO1_time*1000);  
-								TimerStart( &RelayONETimer);								
-							}
-								
-							if(AppData->Buff[5]==1)
-							{
-								if(level_status1==1)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_SET); 
-								else if(level_status1==0)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_RESET); 
-							}
-							else if(AppData->Buff[5]==2)
-							{
-								if(level_status1==1)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_RESET); 
-								else if(level_status1==0)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_SET); 
-							}
-							else if(AppData->Buff[5]==3)
-							{
-								HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_1);
-							}
+							originalstatus[2]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
+							TimerSetValue( &RelayONETimer, DI1toRO1_time*1000);  
+							TimerStart( &RelayONETimer);	
+							PPRINTF("RO1 revert timer started (%d sec delay)\r\n", DI1toRO1_time);
 						}
+					}
+					
+					// Process DI2 trigger (for TIMER feature only)
+					if(AppData->Buff[8]!=0x00)
+					{
+						PPRINTF("DI2 trigger detected (Buff[8]=0x%02x)\r\n", AppData->Buff[8]);
 						
-						if(AppData->Buff[8]!=0x00)
+						// Start revert timer if configured
+						if((DI2toRO2_time!=0)&&(DI2toRO2_statu!=0))
 						{
-							AppData->Buff[8]=DItwotoRO;	
-							
-							if((DI2toRO2_time!=0)&&(DI2toRO2_statu!=0))
-							{
-								originalstatus[3]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);	
-								TimerSetValue( &RelayTWOTimer, DI2toRO2_time*1000);  
-								TimerStart( &RelayTWOTimer);									
-							}
-							
-							if(AppData->Buff[8]==1)
-							{
-								if(level_status2==1)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_SET); 
-								else if(level_status2==0)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_RESET); 
-							}
-							else if(AppData->Buff[8]==2)
-							{
-								if(level_status2==1)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_RESET); 
-								else if(level_status2==0)
-									HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_SET); 
-							}
-							else if(AppData->Buff[8]==3)
-							{
-								HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_0);
-							}					
+							originalstatus[3]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);	
+							TimerSetValue( &RelayTWOTimer, DI2toRO2_time*1000);  
+							TimerStart( &RelayTWOTimer);	
+							PPRINTF("RO2 revert timer started (%d sec delay)\r\n", DI2toRO2_time);
 						}
+					}
 						
 						if((group_mode==1)&&(group_mode_id>=1)&&(group_mode_id<=8))   //point to multi-point
 						{
@@ -1227,8 +1187,11 @@ static void LoraStartTx(void)
 static void OnAckEvent( void )
 {
 	ack_send_num++;
+	PPRINTF("ACK timeout (attempt %d/5)\r\n", ack_send_num);
+	
 	if(ack_send_num>=5)
 	{
+		PPRINTF("Max ACK retries reached - giving up\r\n");
 		TimerStop( &AckTimer );
 		ack_send_num=0;
 		lora_wait_flags=0;	
@@ -1241,7 +1204,9 @@ static void OnAckEvent( void )
 		else
 			TimerSetValue( &AckTimer,  30000 );
 		TimerStart( &AckTimer );
-		uplinkcount--;
+		
+		PPRINTF("Retransmitting (uplinkcount %u → %u)\r\n", uplinkcount, uplinkcount-1);
+		uplinkcount--;  // Compensate for the increment that will happen in next TX
 		uplink_data_status=1;
 		retransmission_flag=1;
 	}		
@@ -2452,16 +2417,17 @@ void test_run_comprehensive_test(void)
 // NEW CODE - Watchdog System Implementation
 static void watchdog_init(void)
 {
-    // Initialize watchdog timer
+    // Always initialize timer structure
     TimerInit(&WatchdogTimer, watchdog_timer_callback);
+    
+    // Always initialize last_received_time (even if disabled)
+    watchdog.last_received_time = get_system_tick_ms();
+    watchdog.missed_count = 0;
+    watchdog.link_active = true;
+    watchdog.safe_state_active = false;
     
     if(watchdog.enabled)
     {
-        watchdog.last_received_time = get_system_tick_ms();
-        watchdog.missed_count = 0;
-        watchdog.link_active = true;
-        watchdog.safe_state_active = false;
-        
         // Start watchdog timer
         TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
         TimerStart(&WatchdogTimer);
@@ -2479,81 +2445,101 @@ static void watchdog_timer_callback(void)
 {
     if(!watchdog.enabled) return;
     
-    uint32_t current_time = get_system_tick_ms();
-    uint32_t time_since_last = current_time - watchdog.last_received_time;
-    
     // Timer fired - means interval elapsed without packet
     watchdog.missed_count++;
-    PPRINTF("!!! Watchdog: No signal for %lu ms (missed: %d/%d) !!!\r\n", 
-            time_since_last, watchdog.missed_count, watchdog.max_missed);
+    
+    uint32_t current_time = get_system_tick_ms();
+    
+    // Calculate time since last packet (for logging)
+    uint32_t time_since_last_packet = current_time - watchdog.last_received_time;
+    
+    // Calculate expected time (interval * missed_count)
+    uint32_t expected_time = watchdog.interval_seconds * 1000 * watchdog.missed_count;
+    
+    // CRITICAL: Must stop timer before restarting it
+    TimerStop(&WatchdogTimer);
+    TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
+    TimerStart(&WatchdogTimer);
     
     // Check if we've exceeded max missed pings
     if(watchdog.missed_count >= watchdog.max_missed)
     {
         if(!watchdog.safe_state_active)
         {
+            // First time entering link loss - trigger safe state
+            PPRINTF("Watchdog: No packet for %lu ms / expected %lu ms (missed: %d/%d)\r\n", 
+                    time_since_last_packet, expected_time, watchdog.missed_count, watchdog.max_missed);
             watchdog_trigger_safe_state();
         }
+        else
+        {
+            // Already in safe state - just log periodically
+            PPRINTF("Link still lost (%lu ms since last packet)\r\n", time_since_last_packet);
+        }
     }
-    
-    // Restart watchdog timer for next check
-    TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
-    TimerStart(&WatchdogTimer);
+    else
+    {
+        // Still counting misses
+        PPRINTF("Watchdog: No packet for %lu ms / expected %lu ms (missed: %d/%d)\r\n", 
+                time_since_last_packet, expected_time, watchdog.missed_count, watchdog.max_missed);
+    }
 }
 
 static void watchdog_reset(void)
 {
     if(!watchdog.enabled) return;
     
-    watchdog.last_received_time = get_system_tick_ms();
+    // Update last received time
+    uint32_t now = get_system_tick_ms();
+    watchdog.last_received_time = now;
+    
+    // Reset missed counter
+    watchdog.missed_count = 0;
+    
+    // CRITICAL: Restart the timer from NOW
+    // This ensures the next timeout is interval_seconds from packet reception
+    TimerStop(&WatchdogTimer);
+    TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
+    TimerStart(&WatchdogTimer);
+    
+    PPRINTF_VERBOSE("Watchdog reset at %lu ms\r\n", now);
     
     // Check if we're recovering from safe state
     if(watchdog.safe_state_active)
     {
-        PPRINTF("\r\n=== WATCHDOG: Link Restored! ===\r\n");
+        PPRINTF("\r\n=== LINK RESTORED ===\r\n");
         watchdog.safe_state_active = false;
         watchdog.link_active = true;
-        PPRINTF("Restoring outputs based on transmitter state...\r\n");
+        
+        // Turn off DO2 indicator
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+        PPRINTF("DO2 indicator OFF - link recovered\r\n");
+        
+        // RO outputs will be updated by current packet
     }
-    
-    // Reset missed counter
-    if(watchdog.missed_count > 0)
-    {
-        PPRINTF("Watchdog: Link OK (was missed: %d)\r\n", watchdog.missed_count);
-        watchdog.missed_count = 0;
-    }
-    
-    // Restart watchdog timer (this is critical!)
-    TimerStop(&WatchdogTimer);
-    TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
-    TimerStart(&WatchdogTimer);
 }
 
 static void watchdog_trigger_safe_state(void)
 {
-    PPRINTF("\r\n!!! WATCHDOG TIMEOUT !!!\r\n");
-    PPRINTF("No signal from transmitter for %d consecutive checks\r\n", watchdog.max_missed);
-    PPRINTF("Triggering SAFE STATE - Setting all outputs to LOW\r\n");
+    // SIMPLE: Just set outputs and flag, don't stop anything
+    PPRINTF("\r\n=== LINK LOST ===\r\n");
+    PPRINTF("Setting RO1=LOW, RO2=LOW, DO2=HIGH\r\n");
     
-    // Set all DO outputs to LOW (safe state)
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);  // DO1 = LOW
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);  // DO2 = LOW
+    // Set RO outputs to LOW (safe state)
+    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
     
-    // Set all RO outputs to LOW (safe state)
-    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);  // RO1 = LOW
-    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);  // RO2 = LOW
+    // DO2 = Visual indicator
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
     
     // Update state variables
-    DO1_flag = 0;
-    DO2_flag = 0;
     RO1_flag = 0;
     RO2_flag = 0;
     
     watchdog.safe_state_active = true;
     watchdog.link_active = false;
     
-    PPRINTF("All outputs set to SAFE STATE (LOW)\r\n");
-    PPRINTF("Waiting for transmitter to reconnect...\r\n");
+    PPRINTF("Waiting for link recovery (RX active)...\r\n");
 }
 
 // ============================================================================

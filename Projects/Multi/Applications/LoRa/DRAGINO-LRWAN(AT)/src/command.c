@@ -416,6 +416,17 @@ static const struct ATCommand_s ATCommand[] =
     .set = at_return_error,
 		.run = at_PRESETRX_run,
 	},
+	
+	{
+	  .string = AT_WATCHDOG,
+    .size_string = sizeof(AT_WATCHDOG) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_WATCHDOG "=<enable>,<timeout>: Configure link watchdog (receiver only)\r\n",
+#endif
+    .get = at_WATCHDOG_get,
+    .set = at_WATCHDOG_set,
+		.run = at_return_error,
+	},
 };
 
 

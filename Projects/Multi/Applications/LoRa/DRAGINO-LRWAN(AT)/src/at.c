@@ -107,6 +107,19 @@ extern bool sync1_begin,sync2_begin;
 extern uint32_t APP_TX_DUTYCYCLE;
 extern TimerEvent_t TxTimer;
 
+// NEW CODE - Watchdog system (v1.6.0)
+typedef struct {
+    bool enabled;
+    uint8_t interval_seconds;
+    uint8_t missed_count;
+    uint8_t max_missed;
+    uint32_t last_received_time;
+    bool link_active;
+    bool safe_state_active;
+} watchdog_t;
+
+extern watchdog_t watchdog;
+
 /* Exported functions ------------------------------------------------------- */
 
 ATEerror_t at_return_ok(const char *param)
@@ -553,14 +566,120 @@ ATEerror_t at_PRESETRX_run(const char *param)
 	
 	sleep_status = 0;  // DI2SLEEP=0
 	
+	// NEW v1.6.0: Enable watchdog by default for receiver
+	watchdog.enabled = true;
+	watchdog.interval_seconds = 50;  // 50-second timeout
+	watchdog.max_missed = 3;         // 3 consecutive misses = 150s total
+	
 	PPRINTF("Receiver preset applied successfully!\r\n");
 	PPRINTF("RX: 868.7MHz SF12, TX: 869MHz SF12, TDC: 0 (RX-only)\r\n");
+	PPRINTF("Watchdog: ENABLED (50s timeout, 150s total before safe state)\r\n");
+	PPRINTF("  Safe state: RO1=LOW, RO2=LOW, DO2=HIGH (indicator)\r\n");
 	PPRINTF("Use AT+CFG to verify all settings\r\n");
 	PPRINTF("Saving to flash...\r\n");
 	
 	EEPROM_Store_Config();
 	
 	PPRINTF("\n\r!!! IMPORTANT: Please RESET the device for changes to take full effect !!!\r\n");
+	
+	return AT_OK;
+}
+
+ATEerror_t at_WATCHDOG_set(const char *param)
+{
+	uint8_t enable;
+	uint32_t timeout;
+	
+	// Parse: AT+WATCHDOG=<enable>,<timeout_seconds>
+	if (tiny_sscanf(param, "%hhu,%lu", &enable, &timeout) == 2)
+	{
+		// Both parameters provided
+		if(enable != 0 && enable != 1)
+		{
+			PRINTF("ERROR: enable must be 0 (disable) or 1 (enable)\n\r");
+			return AT_PARAM_ERROR;
+		}
+		
+		if(timeout < 10 || timeout > 300)
+		{
+			PRINTF("ERROR: Timeout must be between 10 and 300 seconds\n\r");
+			return AT_PARAM_ERROR;
+		}
+		
+		watchdog.enabled = (enable == 1);
+		watchdog.interval_seconds = timeout;
+		watchdog.max_missed = 3;  // Fixed at 3 for now
+		
+		PRINTF("Watchdog %s: %lu second timeout (%d consecutive misses)\n\r",
+		       watchdog.enabled ? "ENABLED" : "DISABLED",
+		       watchdog.interval_seconds,
+		       watchdog.max_missed);
+		
+		if(watchdog.enabled)
+		{
+			PRINTF("Total timeout: %lu seconds before safe state\n\r", 
+			       watchdog.interval_seconds * watchdog.max_missed);
+			PRINTF("Safe state: RO1=LOW, RO2=LOW, DO2=HIGH (indicator)\n\r");
+		}
+		
+		// Save to flash
+		EEPROM_Store_Config();
+		PRINTF("Watchdog settings saved to flash\n\r");
+		PRINTF("!!! RESET device for watchdog changes to take effect !!!\n\r");
+		
+		return AT_OK;
+	}
+	else if (tiny_sscanf(param, "%hhu", &enable) == 1)
+	{
+		// Only enable parameter (keep current timeout)
+		if(enable != 0 && enable != 1)
+		{
+			PRINTF("ERROR: enable must be 0 or 1\n\r");
+			return AT_PARAM_ERROR;
+		}
+		
+		watchdog.enabled = (enable == 1);
+		
+		PRINTF("Watchdog %s (timeout: %d seconds)\n\r",
+		       watchdog.enabled ? "ENABLED" : "DISABLED",
+		       watchdog.interval_seconds);
+		
+		EEPROM_Store_Config();
+		PRINTF("!!! RESET device for watchdog changes to take effect !!!\n\r");
+		
+		return AT_OK;
+	}
+	else
+	{
+		PRINTF("Usage: AT+WATCHDOG=<enable>,<timeout>\n\r");
+		PRINTF("  enable: 0=disable, 1=enable\n\r");
+		PRINTF("  timeout: 10-300 seconds\n\r");
+		PRINTF("Example: AT+WATCHDOG=1,50\n\r");
+		return AT_PARAM_ERROR;
+	}
+}
+
+ATEerror_t at_WATCHDOG_get(const char *param)
+{
+	PPRINTF("%d,%d\r\n", watchdog.enabled ? 1 : 0, watchdog.interval_seconds);
+	PRINTF("Watchdog: %s\n\r", watchdog.enabled ? "ENABLED" : "DISABLED");
+	
+	if(watchdog.enabled)
+	{
+		PRINTF("Timeout: %d seconds\n\r", watchdog.interval_seconds);
+		PRINTF("Max missed: %d\n\r", watchdog.max_missed);
+		PRINTF("Total timeout: %d seconds\n\r", watchdog.interval_seconds * watchdog.max_missed);
+		PRINTF("Safe state: RO1=LOW, RO2=LOW, DO2=HIGH\n\r");
+		
+		if(watchdog.safe_state_active)
+		{
+			PRINTF("STATUS: SAFE STATE ACTIVE (no link)\n\r");
+		}
+		else if(watchdog.link_active)
+		{
+			PRINTF("STATUS: Link active, monitoring OK\n\r");
+		}
+	}
 	
 	return AT_OK;
 }
