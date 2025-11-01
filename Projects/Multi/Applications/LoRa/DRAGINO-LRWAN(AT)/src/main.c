@@ -75,9 +75,7 @@ static lora_AppData_t AppData;
 bool into_sleep_status=0;
 bool save_flash_status=0;
 bool data_check_flag=0;
-<<<<<<< Updated upstream
 bool sending_flag=0;
-=======
 
 // OLD CODE - Race condition prone flags
 // bool sending_flag=0;
@@ -216,7 +214,6 @@ static void radio_settle_callback(void);
 static void rx_window_callback(void);
 static void group_timing_callback(void);
 
->>>>>>> Stashed changes
 bool test_uplink_status=0;
 bool uplink_data_status=0;
 bool rx_waiting_flag=0;
@@ -368,8 +365,6 @@ int main( void )
 	iwdg_init();			
  	StartIWDGRefresh(); 
 	lora_test_init();
-<<<<<<< Updated upstream
-=======
 	
 	// NEW CODE - Initialize enhanced error recovery system
 	error_recovery_init();
@@ -377,7 +372,6 @@ int main( void )
 	// NEW CODE - Initialize watchdog system (receiver side)
 	watchdog_init();
 	
->>>>>>> Stashed changes
 	GPIO_EXTI_DI1_IoInit(intmode1);
 	if(sleep_status==0)
 	{
@@ -424,7 +418,6 @@ int main( void )
 			
 			DO_control();
 			
-<<<<<<< Updated upstream
 			if((uplink_data_status==1)&&(sending_flag==0))
 			{
 				sending_flag=1;
@@ -437,7 +430,6 @@ int main( void )
 					Send_sync();
 					syncDI1DI2_send_flag=0;
 					exitflag1=0;
-=======
 			// OLD CODE - Race condition prone
 			// if((uplink_data_status==1)&&(sending_flag==0))
 			// {
@@ -451,7 +443,6 @@ int main( void )
 				   radio_get_state() == RADIO_STATE_RX_PREPARING)
 				{
 					Radio.Sleep();  // Stop current RX operation
->>>>>>> Stashed changes
 				}
 				else if(retransmission_flag==1)
 				{	
@@ -467,7 +458,6 @@ int main( void )
 				}			
 				else if(test_uplink_status==1)		
 				{
-<<<<<<< Updated upstream
 					Send_test();
 					test_uplink_status=0;
 					exitflag1=0;
@@ -477,7 +467,6 @@ int main( void )
 					Send_TX();
 				}				
 				uplink_data_status=0;
-=======
 					Radio.SetChannel( tx_signal_freqence );	
 					
 					// OLD CODE - Fixed radio parameters
@@ -533,15 +522,12 @@ int main( void )
 				{
 					PPRINTF("TX state transition failed - radio busy\r\n");
 				}
->>>>>>> Stashed changes
 			}
 			
 			if(rx_waiting_flag==1)
 			{
 				Radio.SetChannel( rx_signal_freqence );
-<<<<<<< Updated upstream
 				Radio.SetRxConfig( MODEM_LORA, bandwidth_value, rx_spreading_value, codingrate_value, 0, preamble_value,5, false,0, true, 0, 0, false, true );	
-=======
 				
 				// OLD CODE - Fixed RX parameters
 				// Radio.SetRxConfig( MODEM_LORA, bandwidth_value, rx_spreading_value, codingrate_value, 0, preamble_value,5, false,0, true, 0, 0, false, true );
@@ -549,7 +535,6 @@ int main( void )
 				// NEW CODE - Dynamic RX parameters with error recovery
 				apply_radio_parameters();
 				
->>>>>>> Stashed changes
 				PPRINTF( "RX on freq %u Hz at SF %d\r\n", rx_signal_freqence, rx_spreading_value );	
 				PPRINTF("rxWaiting\r\n");	
 				Radio.Rx(0);	
@@ -834,8 +819,6 @@ static void RxData(lora_AppData_t *AppData)
 	
 	switch(rece_temp)
 	{
-<<<<<<< Updated upstream
-=======
 		case 0x00:             // NEW CODE - Received feedback from receiver (DO/RO states)
 		{
 			// Feedback packet: accept_flag=1 means receiver is sending back DO/RO states
@@ -900,7 +883,6 @@ static void RxData(lora_AppData_t *AppData)
 			break;
 		}
 		
->>>>>>> Stashed changes
 		case 0x01:             //received maps of Group TX
 		{		
 			if(!((group_mode==0)&&(group_mode_id!=0)))
@@ -909,7 +891,6 @@ static void RxData(lora_AppData_t *AppData)
 				{
 					if((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00))
 					{
-<<<<<<< Updated upstream
 						uint8_t do1,do2,relay_1,relay_2;
 						
 						do1=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
@@ -920,7 +901,6 @@ static void RxData(lora_AppData_t *AppData)
 						uint8_t level_status1,level_status2;
 						level_status1=AppData->Buff[3]&0x0f;
 						level_status2=AppData->Buff[6]&0x0f;	
-=======
 						if((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00))
 						{
 							uint8_t do1,do2,relay_1,relay_2;
@@ -933,7 +913,6 @@ static void RxData(lora_AppData_t *AppData)
 							uint8_t level_status1,level_status2;
 							level_status1=AppData->Buff[3]&0x0f;
 							level_status2=AppData->Buff[6]&0x0f;
->>>>>>> Stashed changes
 						
 						if(AppData->Buff[4]!=0x00)
 						{
@@ -1073,7 +1052,6 @@ static void RxData(lora_AppData_t *AppData)
 						RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 						RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);		
 
-<<<<<<< Updated upstream
 						uplink_data_status=1;
 						PPRINTF("Mapping succeeded\r\n");		
 						HAL_Delay(1000); //Need to Wait for the RX window of the TX group to open
@@ -1082,7 +1060,6 @@ static void RxData(lora_AppData_t *AppData)
 							IWDG_Refresh();
 							HAL_Delay(2500);
 						}
-=======
 					// NEW CODE - Enhanced feedback mechanism
 					// Set accept_flag to send back DO/RO states as confirmation
 					accept_flag=1;
@@ -1104,7 +1081,6 @@ static void RxData(lora_AppData_t *AppData)
 						
 						// NEW CODE - Non-blocking delay for RX window timing
 						non_blocking_delay_start(&rx_window_delay, 1000, rx_window_callback);
->>>>>>> Stashed changes
 						if((DO1_flag!=do1)||(DO2_flag!=do2)||(RO1_flag!=relay_1)||(RO2_flag!=relay_2))
 						{
 							if(befor_RODO==1)
@@ -1548,9 +1524,7 @@ static void lora_test_init(void)
 static void test_OnTxDone( void )
 {
     Radio.Sleep( );
-<<<<<<< Updated upstream
 	  rx_waiting_flag=1;
-=======
     // OLD CODE - Race condition prone
     // rx_waiting_flag=1;
     
@@ -1573,7 +1547,6 @@ static void test_OnTxDone( void )
         test_session.successful_tx++;
         test_log_event("TX completed successfully");
     }
->>>>>>> Stashed changes
 }
 
 static void test_OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
@@ -1725,8 +1698,6 @@ static void DO_control(void)
 		lora_wait_flags=1;
 	}	
 }
-<<<<<<< Updated upstream
-=======
 
 // NEW CODE - Atomic radio state management implementation
 static bool radio_set_state(radio_state_t new_state)
@@ -2531,5 +2502,4 @@ static void watchdog_check(void)
     }
 }
 
->>>>>>> Stashed changes
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
