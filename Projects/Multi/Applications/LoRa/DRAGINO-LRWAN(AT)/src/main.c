@@ -61,6 +61,13 @@
 #include "radio.h"	
 #include "sx1276.h"
 
+// NEW CODE - Conditional verbose printing for performance tuning
+#ifdef FAST_MODE
+  #define PPRINTF_VERBOSE(...)  // Disabled in fast mode
+#else
+  #define PPRINTF_VERBOSE(...) PPRINTF(__VA_ARGS__)  // Enabled normally
+#endif
+
 typedef struct
 {
   /*point to the LoRa App data buffer*/
@@ -81,9 +88,27 @@ bool sending_flag=0;
 // bool sending_flag=0;
 // bool rx_waiting_flag=0;
 
+// NEW CODE - Radio state machine
+typedef enum {
+    RADIO_STATE_IDLE = 0,
+    RADIO_STATE_TX_PREPARING,
+    RADIO_STATE_TX_ACTIVE,
+    RADIO_STATE_RX_PREPARING,
+    RADIO_STATE_RX_ACTIVE,
+    RADIO_STATE_ERROR
+} radio_state_t;
+
 // NEW CODE - Atomic radio state management
 volatile radio_state_t radio_state = RADIO_STATE_IDLE;
 volatile bool radio_state_changed = false;
+
+// Radio state functions
+static bool radio_can_transmit(void);
+static radio_state_t radio_get_state(void);
+static bool radio_set_state(radio_state_t new_state);
+static bool radio_is_idle(void);
+static void radio_force_idle(void);
+static bool radio_can_receive(void);
 
 // NEW CODE - Enhanced error recovery and retry system
 typedef struct {
@@ -155,7 +180,18 @@ static non_blocking_delay_t rx_window_delay = {0};
 static non_blocking_delay_t group_timing_delay = {0};
 static uint8_t group_timing_counter = 0;
 
-// NEW CODE - Watchdog system for link monitoring (typedef in at.h)
+// NEW CODE - Watchdog system structure
+typedef struct {
+    bool enabled;
+    uint8_t interval_seconds;
+    uint8_t missed_count;
+    uint8_t max_missed;
+    uint32_t last_received_time;
+    bool link_active;
+    bool safe_state_active;
+} watchdog_t;
+
+// NEW CODE - Watchdog system for link monitoring
 watchdog_t watchdog = {
     .enabled = false,                // OFF by default (as requested)
     .interval_seconds = 10,          // 10 second default
@@ -184,6 +220,19 @@ static di_state_queue_t di_queue = {
     .change_time = 0,
     .pending_transmission = false
 };
+
+// NEW CODE - Store queued DI states for Send_TX() to use
+// These are set when queue is processed and cleared after TX
+static bool use_queued_di_states = false;
+static uint8_t queued_di1_state = 0;
+static uint8_t queued_di2_state = 0;
+
+// NEW CODE - Latest DI states captured in interrupt handler
+// Updated on EVERY interrupt, used by queue to get latest state
+uint8_t latest_di1_state_from_isr = 0;
+uint8_t latest_di2_state_from_isr = 0;
+bool di1_state_updated_in_isr = false;
+bool di2_state_updated_in_isr = false;
 
 // Watchdog timer
 static TimerEvent_t WatchdogTimer;
@@ -405,6 +454,13 @@ int main( void )
 		RxdownlinkLED();
 	}
 	
+	// NEW CODE - If TDC=0 (no automatic TX), start in RX mode immediately
+	if(APP_TX_DUTYCYCLE == 0)
+	{
+		PPRINTF("TDC=0: Starting in RX-only mode\r\n");
+		rx_waiting_flag=1;
+	}
+	
   while( 1 )
   {
 		/* Handle UART commands */
@@ -412,40 +468,59 @@ int main( void )
 		
 		send_exti();
 		
+		// NEW CODE - Check all non-blocking delays
+		non_blocking_delay_check(&radio_settle_delay);
+		non_blocking_delay_check(&rx_window_delay);
+		non_blocking_delay_check(&group_timing_delay);
+		
 		if(into_sleep_status==0)
 		{
 			relay_control();
 			
-			DO_control();
+		DO_control();
+		
+	// NEW CODE - Atomic radio state management
+	if(uplink_data_status==1)
+	{
+		PPRINTF_VERBOSE("TX attempt: uplink_data_status=1, radio_state=%d\r\n", radio_get_state());
+		
+		if(radio_can_transmit())
+		{
+			// NEW CODE - Stop RX if currently receiving (DI1/DI2 can interrupt RX)
+			if(radio_get_state() == RADIO_STATE_RX_ACTIVE || 
+			   radio_get_state() == RADIO_STATE_RX_PREPARING)
+			{
+				Radio.Sleep();  // Stop current RX operation
+				PPRINTF_VERBOSE("Stopped RX to start TX\r\n");
+			}
 			
-			if((uplink_data_status==1)&&(sending_flag==0))
+			// Transition to TX_PREPARING state BEFORE configuring radio
+			if(!radio_set_state(RADIO_STATE_TX_PREPARING))
+			{
+				PPRINTF("ERROR: Cannot transition to TX_PREPARING from state %d\r\n", radio_get_state());
+				uplink_data_status=0;  // Clear and skip TX
+			}
+			else
 			{
 				sending_flag=1;
 				Radio.SetChannel( tx_signal_freqence );	
 				Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );	
 				PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
 				PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
+				
+				// Transition to TX_ACTIVE state after radio configured, before sending
+				radio_set_state(RADIO_STATE_TX_ACTIVE);
+				
 				if(syncDI1DI2_send_flag==1)
 				{
+					PPRINTF("TX Type: SYNC\r\n");
 					Send_sync();
 					syncDI1DI2_send_flag=0;
 					exitflag1=0;
-			// OLD CODE - Race condition prone
-			// if((uplink_data_status==1)&&(sending_flag==0))
-			// {
-			//     sending_flag=1;
-			
-			// NEW CODE - Atomic radio state management
-			if((uplink_data_status==1) && radio_can_transmit())
-			{
-				// NEW CODE - Stop RX if currently receiving (DI1/DI2 can interrupt RX)
-				if(radio_get_state() == RADIO_STATE_RX_ACTIVE || 
-				   radio_get_state() == RADIO_STATE_RX_PREPARING)
-				{
-					Radio.Sleep();  // Stop current RX operation
 				}
 				else if(retransmission_flag==1)
 				{	
+					PPRINTF("TX Type: RETRANSMISSION\r\n");
 					uint32_t crc_check;
 					txDataBuff[9]= request_flag;
 					crc_check=crc32(txDataBuff,txBufferSize-4);
@@ -458,114 +533,83 @@ int main( void )
 				}			
 				else if(test_uplink_status==1)		
 				{
+					PPRINTF("TX Type: TEST\r\n");
 					Send_test();
 					test_uplink_status=0;
 					exitflag1=0;
 				}				
 				else
 				{
+					PPRINTF("TX Type: NORMAL (exitflag1=%d, exitflag2=%d, heartbeat=%d)\r\n", 
+					        exitflag1, exitflag2, (exitflag1==0 && exitflag2==0));
 					Send_TX();
-				}				
+				}
+				
+				// CRITICAL FIX: Clear flag only AFTER TX is successfully sent
 				uplink_data_status=0;
-					Radio.SetChannel( tx_signal_freqence );	
-					
-					// OLD CODE - Fixed radio parameters
-					// Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );
-					
-					// NEW CODE - Dynamic radio parameters with error recovery
-					apply_radio_parameters();
-					
-					PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
-					PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
-					
-					if(syncDI1DI2_send_flag==1)
-					{
-						Send_sync();
-						syncDI1DI2_send_flag=0;
-						exitflag1=0;
-					}
-					else if(retransmission_flag==1)
-					{	
-						uint32_t crc_check;
-						txDataBuff[9]= request_flag;
-						crc_check=crc32(txDataBuff,txBufferSize-4);
-						txDataBuff[txBufferSize-4] = crc_check&0xff;
-						txDataBuff[txBufferSize-3] = crc_check>>8&0xff;
-						txDataBuff[txBufferSize-2] = crc_check>>16&0xff;
-						txDataBuff[txBufferSize-1] = crc_check>>24&0xff;				
-						Radio.Send( txDataBuff, txBufferSize );
-						exitflag1=0;					
-					}			
-					else if(test_uplink_status==1)		
-					{
-						Send_test();
-						test_uplink_status=0;
-						exitflag1=0;
-					}				
-					else
-					{
-						Send_TX();
-					}
-					
-					// Transition to TX_ACTIVE state after sending
-					radio_set_state(RADIO_STATE_TX_ACTIVE);
-					
-					// NEW CODE - Test tracking
-					if (test_session.test_active) {
-						test_session.tx_attempts++;
-						test_log_event("TX attempt initiated");
-					}
-					
-					uplink_data_status=0;
-				}
-				else
-				{
-					PPRINTF("TX state transition failed - radio busy\r\n");
-				}
 			}
-			
-			if(rx_waiting_flag==1)
-			{
-				Radio.SetChannel( rx_signal_freqence );
-				Radio.SetRxConfig( MODEM_LORA, bandwidth_value, rx_spreading_value, codingrate_value, 0, preamble_value,5, false,0, true, 0, 0, false, true );	
-				
-				// OLD CODE - Fixed RX parameters
-				// Radio.SetRxConfig( MODEM_LORA, bandwidth_value, rx_spreading_value, codingrate_value, 0, preamble_value,5, false,0, true, 0, 0, false, true );
-				
-				// NEW CODE - Dynamic RX parameters with error recovery
-				apply_radio_parameters();
-				
-				PPRINTF( "RX on freq %u Hz at SF %d\r\n", rx_signal_freqence, rx_spreading_value );	
-				PPRINTF("rxWaiting\r\n");	
-				Radio.Rx(0);	
-				sending_flag=0;			
-				rx_waiting_flag=0;
-			}
-			
-			if((sending_flag==0)&&(save_flash_status==1))
-			{
-				status= (RO1_flag<<7) | (RO2_flag<<6) | (DO2_flag<<1) | DO1_flag;
-				Address=find_addr(Address);		
-				read_bsp_data(batteryLevel_mV,status);		
-				store_data_counter(Address);		 
-				PPRINTF("Save\r\n");		
-				save_flash_status=0;
-			}	
 		}
 		else
 		{
-				DISABLE_IRQ( );
-				LPM_EnterLowPower();
-				ENABLE_IRQ();			
+			// uplink_data_status is set but radio cannot transmit
+			PPRINTF("TX blocked - radio state: %d, can_transmit: %d\r\n", radio_get_state(), radio_can_transmit());
+			// Clear the flag to prevent infinite loop
+			uplink_data_status=0;
 		}
+	}
+
+	if(rx_waiting_flag==1)
+	{
+		// Clear flag first
+		rx_waiting_flag=0;
 		
-		if(is_time_to_IWDG_Refresh==1)
+		// Transition to RX_PREPARING
+		if(radio_set_state(RADIO_STATE_RX_PREPARING))
 		{
-			IWDG_Refresh();			
-			is_time_to_IWDG_Refresh=0;
-		}				
-  }
-}
+			Radio.SetChannel( rx_signal_freqence );
+			
+			// NEW CODE - Dynamic RX parameters with error recovery
+			apply_radio_parameters();
+			
+			PPRINTF( "RX on freq %u Hz at SF %d\r\n", rx_signal_freqence, rx_spreading_value );	
+			PPRINTF("rxWaiting\r\n");
+			Radio.Rx(0);
+			
+			// Transition to RX_ACTIVE after starting RX
+			radio_set_state(RADIO_STATE_RX_ACTIVE);
+			
+			sending_flag=0;
+		}
+		else
+		{
+			PPRINTF("ERROR: Cannot transition to RX_PREPARING from state %d\r\n", radio_get_state());
+		}
+	}
+	
+	if((sending_flag==0)&&(save_flash_status==1))
+	{
+		status= (RO1_flag<<7) | (RO2_flag<<6) | (DO2_flag<<1) | DO1_flag;
+		Address=find_addr(Address);		
+		read_bsp_data(batteryLevel_mV,status);		
+		store_data_counter(Address);		 
+		PPRINTF("Save\r\n");		
+		save_flash_status=0;
+	}
+	}  // Close if(into_sleep_status==0)
+	else
+	{
+		DISABLE_IRQ( );
+		LPM_EnterLowPower();
+		ENABLE_IRQ();			
+	}
+	
+	if(is_time_to_IWDG_Refresh==1)
+	{
+		IWDG_Refresh();			
+		is_time_to_IWDG_Refresh=0;
+	}				
+  }  // End while(1) loop
+}  // End main()
 
 static void Send_TX( void )
 {		
@@ -586,16 +630,35 @@ static void Send_TX( void )
 		txDataBuff[i++]= group_mode_id;		
 	}
 	
-	if(((exitflag1==1)||(exitflag2==1))&&(group_mode==0)&&(group_mode_id==0))
+	// CRITICAL FIX: Always set request_flag=1 for transmitter packets (both heartbeat and DI-triggered)
+	// The receiver needs to know this is a request, not feedback
+	if(accept_flag==0)  // If we're the transmitter (not sending feedback)
 	{
-	  request_flag=1;
+		request_flag=1;
+		PPRINTF("Send_TX: Setting request_flag=1 (accept_flag=%d)\r\n", accept_flag);
 	}
+	else
+	{
+		PPRINTF("Send_TX: Sending FEEDBACK (accept_flag=%d, request_flag=%d)\r\n", accept_flag, request_flag);
+	}
+	
 	txDataBuff[i++]= request_flag;	
 	txDataBuff[i++]= accept_flag;	
 	
+	PPRINTF("Packet bytes 9-10: request_flag=%d, accept_flag=%d\r\n", request_flag, accept_flag);	
+	
 	if(accept_flag==0)
 	{
-		DI1_flag=HAL_GPIO_ReadPin(GPIO_EXTI_PORT,GPIO_EXTI_PIN);	
+		// CRITICAL FIX: Use queued state if available, otherwise read current GPIO
+		if(use_queued_di_states && exitflag1==1)
+		{
+			DI1_flag = queued_di1_state;
+			PPRINTF("Using QUEUED DI1 state: %d\r\n", DI1_flag);
+		}
+		else
+		{
+			DI1_flag=HAL_GPIO_ReadPin(GPIO_EXTI_PORT,GPIO_EXTI_PIN);
+		}
 		txDataBuff[i++]=1<<4 | DI1_flag;	
 	}
 	else
@@ -618,7 +681,16 @@ static void Send_TX( void )
 	
 	if(accept_flag==0)
 	{	
-		DI2_flag=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);	
+		// CRITICAL FIX: Use queued state if available, otherwise read current GPIO
+		if(use_queued_di_states && exitflag2==1)
+		{
+			DI2_flag = queued_di2_state;
+			PPRINTF("Using QUEUED DI2 state: %d\r\n", DI2_flag);
+		}
+		else
+		{
+			DI2_flag=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);
+		}
 		txDataBuff[i++]=2<<4 | DI2_flag;
 	}
 	else
@@ -626,7 +698,7 @@ static void Send_TX( void )
 		RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 		RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);		
 		txDataBuff[i++]= RO1_flag<<4 | 	RO2_flag;		
-	}	
+	}
 	
 	if((exitflag2==1)&&(request_flag!=0))
 	{
@@ -652,7 +724,14 @@ static void Send_TX( void )
 	if(exitflag2==1)
 		exitflag2=0;
 	if(accept_flag!=0)
-	accept_flag=0;
+		accept_flag=0;
+	
+	// CRITICAL FIX: Clear queued state flag after TX buffer is prepared with queued states
+	if(use_queued_di_states)
+	{
+		use_queued_di_states = false;
+		PPRINTF("Queued DI states used in TX, flag cleared\r\n");
+	}
 	
 	Radio.Send( txDataBuff, txBufferSize );
 }
@@ -824,6 +903,8 @@ static void RxData(lora_AppData_t *AppData)
 			// Feedback packet: accept_flag=1 means receiver is sending back DO/RO states
 			if(AppData->Buff[2] == 0x01)  // accept_flag=1 in received packet
 			{
+				PPRINTF("DEBUG: Before feedback processing - queue pending: %d\r\n", di_queue_has_pending());
+				
 				// Correct parsing based on actual packet format
 				// Byte 3: DO1_flag<<4 | DO2_flag
 				uint8_t received_DO1 = (AppData->Buff[3] & 0xf0) >> 4;
@@ -877,19 +958,58 @@ static void RxData(lora_AppData_t *AppData)
 				accept_flag = 0;
 				
 				// NEW CODE - Process any DI changes that occurred during heartbeat cycle
-				// This ensures DI changes are sent immediately instead of waiting for next heartbeat
-				di_queue_process_and_send();
+				// Don't send immediately - let main loop handle it naturally to avoid timing conflicts
+				if(di_queue_has_pending())
+				{
+					uint32_t queue_age = get_system_tick_ms() - di_queue.change_time;
+					PPRINTF("=== QUEUE PROCESSING ===\r\n");
+					PPRINTF("Queued DI changes detected (age: %lu ms)\r\n", queue_age);
+					PPRINTF("  DI1 changed: %d (state: %d)\r\n", di_queue.di1_changed, di_queue.di1_state);
+					PPRINTF("  DI2 changed: %d (state: %d)\r\n", di_queue.di2_changed, di_queue.di2_state);
+					
+					// CRITICAL FIX: Store queued states for Send_TX() to use
+					// Send_TX() reads current GPIO, but we need to send the QUEUED states
+					use_queued_di_states = true;
+					
+					// Set flags to trigger TX in next main loop iteration
+					if(di_queue.di1_changed)
+					{
+						exitflag1 = 1;
+						queued_di1_state = di_queue.di1_state;
+						PPRINTF("  Setting exitflag1=1 for queued DI1 (state=%d)\r\n", queued_di1_state);
+					}
+					if(di_queue.di2_changed)
+					{
+						exitflag2 = 1;
+						queued_di2_state = di_queue.di2_state;
+						PPRINTF("  Setting exitflag2=1 for queued DI2 (state=%d)\r\n", queued_di2_state);
+					}
+					
+					// Clear queue but let send_exti() handle the actual TX
+					di_queue_clear();
+					PPRINTF("Queue cleared, queued states stored for Send_TX()\r\n");
+				}
+				else
+				{
+					PPRINTF("No queued DI changes to process\r\n");
+				}
 			}
 			break;
 		}
 		
-		case 0x01:             //received maps of Group TX
+		case 0x01:             //received REQUEST from transmitter (heartbeat or DI-triggered)
 		{		
 			if(!((group_mode==0)&&(group_mode_id!=0)))
 			{
 				if((AppData->BuffSize == 9)&&((AppData->Buff[3]&0xf0)==0x10)&&((AppData->Buff[6]&0xf0)==0x20))
 				{
-					if((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00))
+					// CRITICAL FIX: Process ALL request packets, not just ones with trigger bytes
+					// Heartbeats have trigger bytes = 0x00 but still need acknowledgement
+					bool has_triggers = ((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00));
+					
+					PPRINTF("Received REQUEST packet (has_triggers=%d)\r\n", has_triggers);
+					
+					// Always process the packet (whether heartbeat or DI-triggered)
 					{
 						uint8_t do1,do2,relay_1,relay_2;
 						
@@ -901,18 +1021,6 @@ static void RxData(lora_AppData_t *AppData)
 						uint8_t level_status1,level_status2;
 						level_status1=AppData->Buff[3]&0x0f;
 						level_status2=AppData->Buff[6]&0x0f;	
-						if((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00))
-						{
-							uint8_t do1,do2,relay_1,relay_2;
-							
-							do1=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
-							do2=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);	
-					    relay_1=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);		
-              relay_2=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);							
-					
-							uint8_t level_status1,level_status2;
-							level_status1=AppData->Buff[3]&0x0f;
-							level_status2=AppData->Buff[6]&0x0f;
 						
 						if(AppData->Buff[4]!=0x00)
 						{
@@ -1049,38 +1157,29 @@ static void RxData(lora_AppData_t *AppData)
 						
 						DO1_flag=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
 						DO2_flag=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);	
-						RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
-						RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);		
+					RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
+					RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);		
 
-						uplink_data_status=1;
-						PPRINTF("Mapping succeeded\r\n");		
-						HAL_Delay(1000); //Need to Wait for the RX window of the TX group to open
-						for(uint8_t j=0;j<group_mode_id-1;j++)
-						{
-							IWDG_Refresh();
-							HAL_Delay(2500);
-						}
-					// NEW CODE - Enhanced feedback mechanism
-					// Set accept_flag to send back DO/RO states as confirmation
-					accept_flag=1;
-					
-					PPRINTF("Mapping succeeded - DO1=%d, DO2=%d, RO1=%d, RO2=%d\r\n", 
-					        DO1_flag, DO2_flag, RO1_flag, RO2_flag);
-					PPRINTF("Sending feedback to transmitter...\r\n");
-					
-					// Trigger feedback TX after RX window delay
+				// NEW CODE - Enhanced feedback mechanism with GUARANTEED acknowledgement
+				PPRINTF("Request processed - DO1=%d, DO2=%d, RO1=%d, RO2=%d\r\n", 
+				        DO1_flag, DO2_flag, RO1_flag, RO2_flag);
+				PPRINTF("Sending ACK to transmitter (triggers=%d)...\r\n", has_triggers);
+				
+				// CRITICAL: ALWAYS send acknowledgement for ALL request packets
+				// This ensures transmitter can process its queue reliably (event-driven, no timeouts)
+				if(group_mode_id <= 1)
+				{
+					// Point-to-point: Send ACK immediately
 					uplink_data_status=1;
-						
-						// OLD CODE - Blocking delays that prevent radio responsiveness
-						// HAL_Delay(1000); //Need to Wait for the RX window of the TX group to open
-						// for(uint8_t j=0;j<group_mode_id-1;j++)
-						// {
-						//     IWDG_Refresh();
-						//     HAL_Delay(2500);
-						// }
-						
-						// NEW CODE - Non-blocking delay for RX window timing
-						non_blocking_delay_start(&rx_window_delay, 1000, rx_window_callback);
+					PPRINTF("P2P: ACK triggered (accept_flag=%d, uplink_data_status=%d)\r\n", 
+					        accept_flag, uplink_data_status);
+				}
+				else
+				{
+					// Group mode: Use non-blocking delay to avoid collisions
+					non_blocking_delay_start(&rx_window_delay, 1000, rx_window_callback);
+					PPRINTF("Group mode: Feedback delayed by %dms\r\n", 1000 + (group_mode_id-1)*2500);
+				}
 						if((DO1_flag!=do1)||(DO2_flag!=do2)||(RO1_flag!=relay_1)||(RO2_flag!=relay_2))
 						{
 							if(befor_RODO==1)
@@ -1102,9 +1201,19 @@ static void RxData(lora_AppData_t *AppData)
 static void OnTxTimerEvent( void )
 {
   /*Wait for next tx slot*/
-	TimerSetValue( &TxTimer,  APP_TX_DUTYCYCLE );
-  TimerStart( &TxTimer);
-  uplink_data_status=1;
+  // NEW CODE - Only restart timer and trigger TX if TDC > 0 (heartbeat mode)
+  if(APP_TX_DUTYCYCLE > 0)
+  {
+    TimerSetValue( &TxTimer,  APP_TX_DUTYCYCLE );
+    TimerStart( &TxTimer);
+    uplink_data_status=1;
+  }
+  else
+  {
+    // TDC=0: No automatic transmissions, stay in RX mode
+    // (This shouldn't be called with TDC=0, but just in case)
+    rx_waiting_flag=1;
+  }
 }
 
 static void LoraStartTx(void)
@@ -1338,6 +1447,16 @@ static void send_exti(void)
 		{	
 			if(group_mode==0)
 			{
+				// CRITICAL FIX: Reset heartbeat timer when DI activity occurs
+				// This prevents heartbeat from interfering with DI-triggered feedback cycles
+				if(APP_TX_DUTYCYCLE > 0)
+				{
+					TimerStop(&TxTimer);
+					TimerSetValue(&TxTimer, APP_TX_DUTYCYCLE);
+					TimerStart(&TxTimer);
+					PPRINTF_VERBOSE("TDC timer reset by DI1 activity\r\n");
+				}
+				
 				uplink_data_status=1;
 				lora_wait_flags=1;				
 				if((group_mode==0)&&(group_mode_id!=0))
@@ -1345,28 +1464,28 @@ static void send_exti(void)
 					request_flag=(0xff>>(8-group_mode_id));
 				}
 				
-				if(inttime1==0)
-				{
-					if(group_mode_id==0)
-						TimerSetValue( &AckTimer,  6000 );					
+					if(inttime1==0)
+					{
+						if(group_mode_id==0)
+							TimerSetValue( &AckTimer,  6000 );					
+						else
+							TimerSetValue( &AckTimer,  30000 );
+						TimerStart( &AckTimer );
+					}
 					else
-						TimerSetValue( &AckTimer,  30000 );
-					TimerStart( &AckTimer );
-				}
-				else
-				{
-					PPRINTF("Start DI1 sync\r\n");
-					TimerSetValue( &syncDI1Timer,  inttime1*1000 );
-					TimerStart( &syncDI1Timer );
+					{
+						PPRINTF("Start DI1 sync\r\n");
+						TimerSetValue( &syncDI1Timer,  inttime1*1000 );
+						TimerStart( &syncDI1Timer );
           syncDI1_flag=1;	
           if(sync1_begin==0)
-					{
-					  sync1_begin=1;
-						EEPROM_Store_Config();
-					}												
-					syncDI1DI2_send_flag=1;	
-					exitflag1=0;			
-				}
+						{
+						  sync1_begin=1;
+							EEPROM_Store_Config();
+						}												
+						syncDI1DI2_send_flag=1;	
+						exitflag1=0;			
+					}
 			}
 			else
 			{
@@ -1376,8 +1495,28 @@ static void send_exti(void)
 		else
 		{
 			// NEW CODE - Radio is busy (heartbeat TX/RX active), queue the DI1 change
-			PPRINTF("Radio busy during DI1 change - queuing state\r\n");
-			di_queue_capture_state(1);
+			// CRITICAL: Only capture ONCE, not on every send_exti() call
+			if(!di_queue.di1_changed)  // Only if not already queued
+			{
+				PPRINTF("Radio busy during DI1 change - queuing state (sending_flag=%d)\r\n", sending_flag);
+				di_queue_capture_state(1);
+				PPRINTF("DI1 queued - will be sent after feedback cycle\r\n");
+			}
+			else
+			{
+				// Already queued, just update to latest ISR state
+				if(di1_state_updated_in_isr)
+				{
+					uint8_t old_state = di_queue.di1_state;
+					di_queue.di1_state = latest_di1_state_from_isr;
+					di1_state_updated_in_isr = false;
+					if(old_state != di_queue.di1_state)
+					{
+						PPRINTF("DI1 queue UPDATE: %d → %d (toggle during queue)\r\n", 
+						        old_state, di_queue.di1_state);
+					}
+				}
+			}
 			exitflag1=0;  // Clear flag since we've queued it
 		}
 	}
@@ -1461,6 +1600,16 @@ static void send_exti(void)
 			{	
 				if(group_mode==0)
 				{
+					// CRITICAL FIX: Reset heartbeat timer when DI activity occurs
+					// This prevents heartbeat from interfering with DI-triggered feedback cycles
+					if(APP_TX_DUTYCYCLE > 0)
+					{
+						TimerStop(&TxTimer);
+						TimerSetValue(&TxTimer, APP_TX_DUTYCYCLE);
+						TimerStart(&TxTimer);
+						PPRINTF_VERBOSE("TDC timer reset by DI2 activity\r\n");
+					}
+					
 					uplink_data_status=1;
 					lora_wait_flags=1;				
 					if((group_mode==0)&&(group_mode_id!=0))
@@ -1499,8 +1648,28 @@ static void send_exti(void)
 			else
 			{
 				// NEW CODE - Radio is busy (heartbeat TX/RX active), queue the DI2 change
-				PPRINTF("Radio busy during DI2 change - queuing state\r\n");
-				di_queue_capture_state(2);
+				// CRITICAL: Only capture ONCE, not on every send_exti() call
+				if(!di_queue.di2_changed)  // Only if not already queued
+				{
+					PPRINTF("Radio busy during DI2 change - queuing state (sending_flag=%d)\r\n", sending_flag);
+					di_queue_capture_state(2);
+					PPRINTF("DI2 queued - will be sent after feedback cycle\r\n");
+				}
+				else
+				{
+					// Already queued, just update to latest ISR state
+					if(di2_state_updated_in_isr)
+					{
+						uint8_t old_state = di_queue.di2_state;
+						di_queue.di2_state = latest_di2_state_from_isr;
+						di2_state_updated_in_isr = false;
+						if(old_state != di_queue.di2_state)
+						{
+							PPRINTF("DI2 queue UPDATE: %d → %d (toggle during queue)\r\n", 
+							        old_state, di_queue.di2_state);
+						}
+					}
+				}
 				exitflag2=0;  // Clear flag since we've queued it
 			}
 	  }							
@@ -1524,9 +1693,9 @@ static void lora_test_init(void)
 static void test_OnTxDone( void )
 {
     Radio.Sleep( );
-	  rx_waiting_flag=1;
-    // OLD CODE - Race condition prone
-    // rx_waiting_flag=1;
+    
+    // NEW CODE - Transition to IDLE after TX complete
+    radio_set_state(RADIO_STATE_IDLE);
     
     // NEW CODE - Reset accept_flag after sending feedback
     if(accept_flag == 1)
@@ -1534,13 +1703,21 @@ static void test_OnTxDone( void )
         accept_flag = 0;
         PPRINTF("Feedback sent, returning to normal mode\r\n");
         
-        // NEW CODE - Process any DI changes that occurred during feedback transmission
-        // This ensures DI changes on the receiver side are also sent immediately
-        di_queue_process_and_send();
+        // NOTE: Queue processing is NOT done here for receiver
+        // Queue is only processed on TRANSMITTER side after receiving feedback (in RxData case 0x00)
     }
     
-    // NEW CODE - Atomic state transition
-    radio_set_state(RADIO_STATE_RX_PREPARING);
+    // CRITICAL FIX: Always go back to RX mode after TX (to receive feedback or next packet)
+    // Only skip if there's queued TX from DI queue
+    if(uplink_data_status == 0)
+    {
+        rx_waiting_flag=1;
+        PPRINTF("TX complete, returning to RX mode\r\n");
+    }
+    else
+    {
+        PPRINTF("TX complete, queued TX pending\r\n");
+    }
     
     // NEW CODE - Test tracking
     if (test_session.test_active) {
@@ -1553,6 +1730,18 @@ static void test_OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t
 {
 	// NEW CODE - Reset watchdog on any received packet
 	watchdog_receive_ping();
+	
+	// IMPROVED: If feedback is pending, cancel it and process new packet (more recent state)
+	if(accept_flag == 1 || uplink_data_status == 1)
+	{
+		PPRINTF("RX: Superseding old feedback with new packet (state updated)\r\n");
+		accept_flag = 0;
+		uplink_data_status = 0;
+		// Continue to process the new packet with updated state
+	}
+	
+	// NEW CODE - Transition from RX_ACTIVE to IDLE after packet received
+	radio_set_state(RADIO_STATE_IDLE);
 	
 	if((payload[0]==group_id[0])&&(payload[1]==group_id[1])&&(payload[2]==group_id[2])&&(payload[3]==group_id[3])
 	   &&(payload[4]==group_id[4])&&(payload[5]==group_id[5])&&(payload[6]==group_id[6])&&(payload[7]==group_id[7]))
@@ -1586,23 +1775,36 @@ static void test_OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t
 	{
 		data_check_flag=1;
 	}
+	
+	// NEW CODE - After processing RX, continue listening (unless feedback needs to be sent)
+	if(accept_flag == 0 && uplink_data_status == 0)
+	{
+		rx_waiting_flag=1;  // Go back to RX mode
+	}
 }
 
 static void test_OnTxTimeout( void )
 {
   PPRINTF("OnTxTimeout\n\r");
   Radio.Sleep( );
+  radio_set_state(RADIO_STATE_IDLE);
 	rx_waiting_flag=1;
 }
 
 static void test_OnRxTimeout( void )
 {
   PPRINTF("OnRxTimeout\n\r");
+  Radio.Sleep();
+  radio_set_state(RADIO_STATE_IDLE);
+  rx_waiting_flag=1;  // Restart RX
 }
 
 static void test_OnRxError( void )
 {
   PPRINTF("OnRxError\n\r");
+  Radio.Sleep();
+  radio_set_state(RADIO_STATE_IDLE);
+  rx_waiting_flag=1;  // Restart RX
 }
 
 static uint32_t crc32(uint8_t *data,uint16_t length) //CRC_32/ADCCP
@@ -2374,29 +2576,78 @@ static void di_queue_capture_state(uint8_t di_channel)
     
     if(di_channel == 1)
     {
-        // Read current DI1 state
-        GPIO_PinState current_di1 = HAL_GPIO_ReadPin(GPIO_EXTI_PORT, GPIO_EXTI_PIN);
+        // CRITICAL FIX: Use state captured by ISR (updated on EVERY interrupt, even during debounce)
+        // This ensures we always get the LATEST state, even if multiple interrupts occurred
+        uint8_t new_state;
+        
+        if(di1_state_updated_in_isr)
+        {
+            new_state = latest_di1_state_from_isr;
+            di1_state_updated_in_isr = false;  // Clear flag
+            PPRINTF("Using DI1 state from ISR: %d\r\n", new_state);
+        }
+        else
+        {
+            // Fallback: Read current GPIO if ISR didn't update
+            GPIO_PinState current_di1 = HAL_GPIO_ReadPin(GPIO_EXTI_PORT, GPIO_EXTI_PIN);
+            new_state = (current_di1 == GPIO_PIN_SET) ? 1 : 0;
+            PPRINTF("Reading DI1 state from GPIO: %d\r\n", new_state);
+        }
+        
+        // CRITICAL: If DI1 was already queued, this is an UPDATE (captures latest state)
+        if(di_queue.di1_changed && di_queue.di1_state != new_state)
+        {
+            PPRINTF("DI1 queue UPDATE: %d → %d (multiple toggles during heartbeat)\r\n", 
+                    di_queue.di1_state, new_state);
+        }
         
         di_queue.di1_changed = true;
-        di_queue.di1_state = (current_di1 == GPIO_PIN_SET) ? 1 : 0;
-        di_queue.change_time = current_time;
+        di_queue.di1_state = new_state;  // ALWAYS update to latest
+        di_queue.change_time = current_time;  // Update timestamp
         di_queue.pending_transmission = true;
         
-        PPRINTF_VERBOSE("DI1 change queued: state=%d, time=%lu\r\n", 
+        PPRINTF_VERBOSE("DI1 queued: LATEST state=%d, time=%lu\r\n", 
                        di_queue.di1_state, current_time);
+        PPRINTF("QUEUE STATUS: pending=%d, DI1=%d (state:%d), DI2=%d (state:%d)\r\n", 
+                di_queue.pending_transmission, di_queue.di1_changed, di_queue.di1_state,
+                di_queue.di2_changed, di_queue.di2_state);
     }
     else if(di_channel == 2)
     {
-        // Read current DI2 state
-        GPIO_PinState current_di2 = HAL_GPIO_ReadPin(GPIO_EXTI2_PORT, GPIO_EXTI2_PIN);
+        // CRITICAL FIX: Use state captured by ISR (updated on EVERY interrupt, even during debounce)
+        uint8_t new_state;
+        
+        if(di2_state_updated_in_isr)
+        {
+            new_state = latest_di2_state_from_isr;
+            di2_state_updated_in_isr = false;  // Clear flag
+            PPRINTF("Using DI2 state from ISR: %d\r\n", new_state);
+        }
+        else
+        {
+            // Fallback: Read current GPIO if ISR didn't update
+            GPIO_PinState current_di2 = HAL_GPIO_ReadPin(GPIO_EXTI2_PORT, GPIO_EXTI2_PIN);
+            new_state = (current_di2 == GPIO_PIN_SET) ? 1 : 0;
+            PPRINTF("Reading DI2 state from GPIO: %d\r\n", new_state);
+        }
+        
+        // CRITICAL: If DI2 was already queued, this is an UPDATE (captures latest state)
+        if(di_queue.di2_changed && di_queue.di2_state != new_state)
+        {
+            PPRINTF("DI2 queue UPDATE: %d → %d (multiple toggles during heartbeat)\r\n", 
+                    di_queue.di2_state, new_state);
+        }
         
         di_queue.di2_changed = true;
-        di_queue.di2_state = (current_di2 == GPIO_PIN_SET) ? 1 : 0;
-        di_queue.change_time = current_time;
+        di_queue.di2_state = new_state;  // ALWAYS update to latest
+        di_queue.change_time = current_time;  // Update timestamp
         di_queue.pending_transmission = true;
         
-        PPRINTF_VERBOSE("DI2 change queued: state=%d, time=%lu\r\n", 
+        PPRINTF_VERBOSE("DI2 queued: LATEST state=%d, time=%lu\r\n", 
                        di_queue.di2_state, current_time);
+        PPRINTF("QUEUE STATUS: pending=%d, DI1=%d (state:%d), DI2=%d (state:%d)\r\n", 
+                di_queue.pending_transmission, di_queue.di1_changed, di_queue.di1_state,
+                di_queue.di2_changed, di_queue.di2_state);
     }
 }
 

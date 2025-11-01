@@ -70,6 +70,12 @@ extern uint16_t intdelay1,intdelay2;
 extern uint32_t COUNT1;
 extern uint32_t COUNT2;
 extern bool sleep_status;
+
+// NEW CODE - Latest DI states from interrupt handler
+extern uint8_t latest_di1_state_from_isr;
+extern uint8_t latest_di2_state_from_isr;
+extern bool di1_state_updated_in_isr;
+extern bool di2_state_updated_in_isr;
 bool exitflag1=0,exitflag2=0;
 
 void LoraStartdelay1(void);
@@ -265,6 +271,11 @@ void EXTI4_15_IRQHandler( void )
 
   if(__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_9) != RESET) 
   {		
+	  // NEW CODE - ALWAYS capture latest state on EVERY interrupt (for queue)
+	  GPIO_PinState current_state = HAL_GPIO_ReadPin(GPIO_EXTI_PORT,GPIO_EXTI_PIN);
+	  latest_di1_state_from_isr = (current_state == GPIO_PIN_SET) ? 1 : 0;
+	  di1_state_updated_in_isr = true;
+	  
 	  if(intdelay1==0)
 		{
 			exitflag1=1;							
@@ -273,7 +284,7 @@ void EXTI4_15_IRQHandler( void )
 		{
 			if(intput_flgs1==0)
 			{
-				status1=HAL_GPIO_ReadPin(GPIO_EXTI_PORT,GPIO_EXTI_PIN);
+				status1=current_state;  // Use already-read state
 				TimerSetValue(&exdelay1Timer,intdelay1); 
 				TimerStart(&exdelay1Timer);
 				intput_flgs1=1;
@@ -289,11 +300,16 @@ void EXTI4_15_IRQHandler( void )
 
 	if(__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_12) != RESET) 
 	{	
+		// NEW CODE - ALWAYS capture latest state on EVERY interrupt (for queue)
+		GPIO_PinState current_state = HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);
+		latest_di2_state_from_isr = (current_state == GPIO_PIN_SET) ? 1 : 0;
+		di2_state_updated_in_isr = true;
+		
 		if(sleep_status==1)
 		{
 		  if(intput_flgs2==0)
 			{
-				status2=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);			
+				status2=current_state;  // Use already-read state
 				TimerSetValue(&exdelay2Timer,500); 
 				TimerStart(&exdelay2Timer);		
 			}
@@ -309,7 +325,7 @@ void EXTI4_15_IRQHandler( void )
 			{
 				if(intput_flgs2==0)
 				{
-					status2=HAL_GPIO_ReadPin(GPIO_EXTI2_PORT,GPIO_EXTI2_PIN);
+					status2=current_state;  // Use already-read state
 					TimerSetValue(&exdelay2Timer,intdelay2); 
 					TimerStart(&exdelay2Timer);
 					intput_flgs2=1;

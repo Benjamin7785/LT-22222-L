@@ -108,6 +108,8 @@ typedef enum eATEerror
 #define AT_SEND       "+SEND"
 #define AT_VER        "+VER"
 #define AT_CFG        "+CFG"
+#define AT_PRESETTX   "+PRESETTX"
+#define AT_PRESETRX   "+PRESETRX"
 
 ATEerror_t at_return_ok(const char *param);
 ATEerror_t at_return_error(const char *param);
@@ -160,6 +162,8 @@ ATEerror_t at_di2sleep_get(const char *param);
 ATEerror_t at_Send(const char *param);
 ATEerror_t at_version_get(const char *param);
 ATEerror_t at_CFG_run(const char *param);
+ATEerror_t at_PRESETTX_run(const char *param);
+ATEerror_t at_PRESETRX_run(const char *param);
 
 void count_clean(void);
 

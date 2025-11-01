@@ -451,6 +451,120 @@ ATEerror_t at_CFG_run(const char *param)
 	return AT_OK;	
 }
 
+ATEerror_t at_PRESETTX_run(const char *param)
+{
+	PPRINTF("\n\r=== Applying Transmitter Preset ===\r\n");
+	
+	// Set all parameters for transmitter configuration
+	sync_value = 1;
+	txp_value = 8;
+	tx_signal_freqence = 868700000;
+	tx_spreading_value = 12;
+	rx_signal_freqence = 869000000;
+	rx_spreading_value = 12;
+	bandwidth_value = 0;
+	codingrate_value = 1;
+	APP_TX_DUTYCYCLE = 15000;
+	intmode1 = 2;
+	inttime1 = 250;
+	intmode2 = 2;
+	inttime2 = 250;
+	group_mode = 0;
+	group_mode_id = 0;
+	
+	// Set group ID to 12345678
+	group_id[0] = 0x31;  // '1'
+	group_id[1] = 0x32;  // '2'
+	group_id[2] = 0x33;  // '3'
+	group_id[3] = 0x34;  // '4'
+	group_id[4] = 0x35;  // '5'
+	group_id[5] = 0x36;  // '6'
+	group_id[6] = 0x37;  // '7'
+	group_id[7] = 0x38;  // '8'
+	
+	// Set DI to DO/RO mappings (2 = inverse mapping)
+	DIonetoDO = 2;
+	DIonetoRO = 2;
+	DItwotoDO = 2;
+	DItwotoRO = 2;
+	
+	// Set DOROSAVE parameters
+	befor_RODO = 2;
+	RO1_init = 0;
+	RO2_init = 0;
+	DO1_init = 0;
+	DO2_init = 0;
+	
+	sleep_status = 0;  // DI2SLEEP=0
+	
+	PPRINTF("Transmitter preset applied successfully!\r\n");
+	PPRINTF("TX: 868.7MHz SF12, RX: 869MHz SF12, TDC: 15000ms\r\n");
+	PPRINTF("Use AT+CFG to verify all settings\r\n");
+	PPRINTF("Saving to flash...\r\n");
+	
+	EEPROM_Store_Config();
+	
+	return AT_OK;
+}
+
+ATEerror_t at_PRESETRX_run(const char *param)
+{
+	PPRINTF("\n\r=== Applying Receiver Preset ===\r\n");
+	
+	// Set all parameters for receiver configuration (swapped TX/RX from transmitter)
+	sync_value = 1;
+	txp_value = 8;
+	tx_signal_freqence = 869000000;  // Swapped: Receiver TX on 869MHz
+	tx_spreading_value = 12;
+	rx_signal_freqence = 868700000;  // Swapped: Receiver RX on 868.7MHz
+	rx_spreading_value = 12;
+	bandwidth_value = 0;
+	codingrate_value = 1;
+	APP_TX_DUTYCYCLE = 0;  // CRITICAL: Receiver has TDC=0 (RX-only mode)
+	intmode1 = 2;
+	inttime1 = 250;
+	intmode2 = 2;
+	inttime2 = 250;
+	group_mode = 0;
+	group_mode_id = 0;
+	
+	// Set group ID to 12345678 (must match transmitter)
+	group_id[0] = 0x31;  // '1'
+	group_id[1] = 0x32;  // '2'
+	group_id[2] = 0x33;  // '3'
+	group_id[3] = 0x34;  // '4'
+	group_id[4] = 0x35;  // '5'
+	group_id[5] = 0x36;  // '6'
+	group_id[6] = 0x37;  // '7'
+	group_id[7] = 0x38;  // '8'
+	
+	// Set DI to DO/RO mappings (2 = inverse mapping)
+	DIonetoDO = 2;
+	DIonetoRO = 2;
+	DItwotoDO = 2;
+	DItwotoRO = 2;
+	
+	// Set DOROSAVE parameters
+	befor_RODO = 2;
+	RO1_init = 0;
+	RO2_init = 0;
+	DO1_init = 0;
+	DO2_init = 0;
+	
+	sleep_status = 0;  // DI2SLEEP=0
+	
+	PPRINTF("Receiver preset applied successfully!\r\n");
+	PPRINTF("RX: 868.7MHz SF12, TX: 869MHz SF12, TDC: 0 (RX-only)\r\n");
+	PPRINTF("Use AT+CFG to verify all settings\r\n");
+	PPRINTF("Saving to flash...\r\n");
+	
+	EEPROM_Store_Config();
+	
+	PPRINTF("\n\r!!! IMPORTANT: Please RESET the device for changes to take full effect !!!\r\n");
+	
+	return AT_OK;
+}
+
 ATEerror_t at_TDC_set(const char *param)
 { 
 	uint32_t txtimeout;
@@ -460,9 +574,17 @@ ATEerror_t at_TDC_set(const char *param)
     return AT_PARAM_ERROR;
   }
 	
+	// NEW CODE - Allow TDC=0 for receiver mode (no automatic TX)
+	if(txtimeout == 0)
+	{
+		PRINTF("TDC=0: Receiver mode (no automatic transmissions)\n\r");
+		APP_TX_DUTYCYCLE=0;
+		return AT_OK;
+	}
+	
 	if(txtimeout<6000)
 	{
-		PRINTF("TDC setting must be more than 6S\n\r");
+		PRINTF("TDC setting must be 0 (receiver mode) or >= 6000ms\n\r");
 		APP_TX_DUTYCYCLE=6000;
 		return AT_PARAM_ERROR;
 	}

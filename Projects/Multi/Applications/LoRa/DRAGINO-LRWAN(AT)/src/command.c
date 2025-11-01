@@ -393,7 +393,29 @@ static const struct ATCommand_s ATCommand[] =
     .get = at_return_error,
     .set = at_return_error,
 		.run = at_CFG_run,
-	},			
+	},
+	
+	{
+	  .string = AT_PRESETTX,
+    .size_string = sizeof(AT_PRESETTX) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_PRESETTX ": Apply transmitter preset configuration\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_return_error,
+		.run = at_PRESETTX_run,
+	},
+	
+	{
+	  .string = AT_PRESETRX,
+    .size_string = sizeof(AT_PRESETRX) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_PRESETRX ": Apply receiver preset configuration\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_return_error,
+		.run = at_PRESETRX_run,
+	},
 };
 
 
