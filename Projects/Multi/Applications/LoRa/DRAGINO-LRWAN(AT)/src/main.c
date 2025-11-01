@@ -75,7 +75,148 @@ static lora_AppData_t AppData;
 bool into_sleep_status=0;
 bool save_flash_status=0;
 bool data_check_flag=0;
+<<<<<<< Updated upstream
 bool sending_flag=0;
+=======
+
+// OLD CODE - Race condition prone flags
+// bool sending_flag=0;
+// bool rx_waiting_flag=0;
+
+// NEW CODE - Atomic radio state management
+volatile radio_state_t radio_state = RADIO_STATE_IDLE;
+volatile bool radio_state_changed = false;
+
+// NEW CODE - Enhanced error recovery and retry system
+typedef struct {
+    uint8_t tx_failures;
+    uint8_t rx_failures;
+    uint8_t consecutive_errors;
+    uint8_t max_retries;
+    uint32_t last_error_time;
+    bool fallback_mode;
+} error_recovery_t;
+
+typedef struct {
+    uint8_t power_level;
+    uint8_t spreading_factor;
+    uint8_t bandwidth;
+    uint8_t coding_rate;
+} radio_params_t;
+
+static error_recovery_t error_stats = {0};
+static radio_params_t primary_params = {0};
+static radio_params_t fallback_params = {0};
+static bool use_fallback_params = false;
+
+// Error recovery functions
+static void error_recovery_init(void);
+static void error_recovery_reset(void);
+static void error_recovery_handle_tx_failure(void);
+static void error_recovery_handle_rx_failure(void);
+static void error_recovery_switch_to_fallback(void);
+static void error_recovery_switch_to_primary(void);
+static bool error_recovery_should_retry(void);
+static void error_recovery_log_error(const char* error_type);
+static void apply_radio_parameters(void);
+
+// NEW CODE - Testing and validation functions
+typedef struct {
+    uint32_t test_start_time;
+    uint32_t test_duration_ms;
+    uint8_t test_scenario;
+    bool test_active;
+    uint32_t tx_attempts;
+    uint32_t rx_attempts;
+    uint32_t successful_tx;
+    uint32_t successful_rx;
+    uint32_t errors_handled;
+} test_session_t;
+
+static test_session_t test_session = {0};
+
+// Test functions
+static void test_init_session(uint8_t scenario, uint32_t duration_ms);
+static void test_log_event(const char* event);
+static void test_print_results(void);
+static void test_validate_state_machine(void);
+static void test_simulate_radio_errors(void);
+static void test_validate_error_recovery(void);
+static void test_validate_non_blocking_delays(void);
+
+// NEW CODE - Non-blocking delay infrastructure
+typedef struct {
+    bool active;
+    uint32_t start_time;
+    uint32_t duration_ms;
+    void (*callback)(void);
+} non_blocking_delay_t;
+
+static non_blocking_delay_t radio_settle_delay = {0};
+static non_blocking_delay_t rx_window_delay = {0};
+static non_blocking_delay_t group_timing_delay = {0};
+static uint8_t group_timing_counter = 0;
+
+// NEW CODE - Watchdog system for link monitoring (typedef in at.h)
+watchdog_t watchdog = {
+    .enabled = false,                // OFF by default (as requested)
+    .interval_seconds = 10,          // 10 second default
+    .missed_count = 0,
+    .max_missed = 5,
+    .last_received_time = 0,
+    .link_active = true,
+    .safe_state_active = false
+};
+
+// NEW CODE - DI State Change Queue for Heartbeat Mode
+typedef struct {
+    bool di1_changed;                // DI1 changed during heartbeat
+    bool di2_changed;                // DI2 changed during heartbeat
+    uint8_t di1_state;               // Captured DI1 state (0 or 1)
+    uint8_t di2_state;               // Captured DI2 state (0 or 1)
+    uint32_t change_time;            // Timestamp of change
+    bool pending_transmission;       // Need to send queued changes
+} di_state_queue_t;
+
+static di_state_queue_t di_queue = {
+    .di1_changed = false,
+    .di2_changed = false,
+    .di1_state = 0,
+    .di2_state = 0,
+    .change_time = 0,
+    .pending_transmission = false
+};
+
+// Watchdog timer
+static TimerEvent_t WatchdogTimer;
+
+// Watchdog function declarations
+static void watchdog_init(void);
+static void watchdog_check(void);
+static void watchdog_reset(void);
+static void watchdog_trigger_safe_state(void);
+static void watchdog_timer_callback(void);
+static void watchdog_send_ping(void);
+static void watchdog_receive_ping(void);
+
+// DI State Queue functions
+static void di_queue_capture_state(uint8_t di_channel);
+static void di_queue_clear(void);
+static bool di_queue_has_pending(void);
+static void di_queue_process_and_send(void);
+
+// Non-blocking delay functions
+static void non_blocking_delay_start(non_blocking_delay_t* delay, uint32_t duration_ms, void (*callback)(void));
+static bool non_blocking_delay_check(non_blocking_delay_t* delay);
+static void non_blocking_delay_stop(non_blocking_delay_t* delay);
+static uint32_t get_system_tick_ms(void);
+
+// Callback function declarations
+static void radio_settle_callback(void);
+static void rx_window_callback(void);
+static void group_timing_callback(void);
+
+>>>>>>> Stashed changes
 bool test_uplink_status=0;
 bool uplink_data_status=0;
 bool rx_waiting_flag=0;
@@ -227,6 +368,16 @@ int main( void )
 	iwdg_init();			
  	StartIWDGRefresh(); 
 	lora_test_init();
+<<<<<<< Updated upstream
+=======
+	
+	// NEW CODE - Initialize enhanced error recovery system
+	error_recovery_init();
+	
+	// NEW CODE - Initialize watchdog system (receiver side)
+	watchdog_init();
+	
+>>>>>>> Stashed changes
 	GPIO_EXTI_DI1_IoInit(intmode1);
 	if(sleep_status==0)
 	{
@@ -273,6 +424,7 @@ int main( void )
 			
 			DO_control();
 			
+<<<<<<< Updated upstream
 			if((uplink_data_status==1)&&(sending_flag==0))
 			{
 				sending_flag=1;
@@ -285,6 +437,21 @@ int main( void )
 					Send_sync();
 					syncDI1DI2_send_flag=0;
 					exitflag1=0;
+=======
+			// OLD CODE - Race condition prone
+			// if((uplink_data_status==1)&&(sending_flag==0))
+			// {
+			//     sending_flag=1;
+			
+			// NEW CODE - Atomic radio state management
+			if((uplink_data_status==1) && radio_can_transmit())
+			{
+				// NEW CODE - Stop RX if currently receiving (DI1/DI2 can interrupt RX)
+				if(radio_get_state() == RADIO_STATE_RX_ACTIVE || 
+				   radio_get_state() == RADIO_STATE_RX_PREPARING)
+				{
+					Radio.Sleep();  // Stop current RX operation
+>>>>>>> Stashed changes
 				}
 				else if(retransmission_flag==1)
 				{	
@@ -300,6 +467,7 @@ int main( void )
 				}			
 				else if(test_uplink_status==1)		
 				{
+<<<<<<< Updated upstream
 					Send_test();
 					test_uplink_status=0;
 					exitflag1=0;
@@ -309,12 +477,79 @@ int main( void )
 					Send_TX();
 				}				
 				uplink_data_status=0;
+=======
+					Radio.SetChannel( tx_signal_freqence );	
+					
+					// OLD CODE - Fixed radio parameters
+					// Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );
+					
+					// NEW CODE - Dynamic radio parameters with error recovery
+					apply_radio_parameters();
+					
+					PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
+					PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
+					
+					if(syncDI1DI2_send_flag==1)
+					{
+						Send_sync();
+						syncDI1DI2_send_flag=0;
+						exitflag1=0;
+					}
+					else if(retransmission_flag==1)
+					{	
+						uint32_t crc_check;
+						txDataBuff[9]= request_flag;
+						crc_check=crc32(txDataBuff,txBufferSize-4);
+						txDataBuff[txBufferSize-4] = crc_check&0xff;
+						txDataBuff[txBufferSize-3] = crc_check>>8&0xff;
+						txDataBuff[txBufferSize-2] = crc_check>>16&0xff;
+						txDataBuff[txBufferSize-1] = crc_check>>24&0xff;				
+						Radio.Send( txDataBuff, txBufferSize );
+						exitflag1=0;					
+					}			
+					else if(test_uplink_status==1)		
+					{
+						Send_test();
+						test_uplink_status=0;
+						exitflag1=0;
+					}				
+					else
+					{
+						Send_TX();
+					}
+					
+					// Transition to TX_ACTIVE state after sending
+					radio_set_state(RADIO_STATE_TX_ACTIVE);
+					
+					// NEW CODE - Test tracking
+					if (test_session.test_active) {
+						test_session.tx_attempts++;
+						test_log_event("TX attempt initiated");
+					}
+					
+					uplink_data_status=0;
+				}
+				else
+				{
+					PPRINTF("TX state transition failed - radio busy\r\n");
+				}
+>>>>>>> Stashed changes
 			}
 			
 			if(rx_waiting_flag==1)
 			{
 				Radio.SetChannel( rx_signal_freqence );
+<<<<<<< Updated upstream
 				Radio.SetRxConfig( MODEM_LORA, bandwidth_value, rx_spreading_value, codingrate_value, 0, preamble_value,5, false,0, true, 0, 0, false, true );	
+=======
+				
+				// OLD CODE - Fixed RX parameters
+				// Radio.SetRxConfig( MODEM_LORA, bandwidth_value, rx_spreading_value, codingrate_value, 0, preamble_value,5, false,0, true, 0, 0, false, true );
+				
+				// NEW CODE - Dynamic RX parameters with error recovery
+				apply_radio_parameters();
+				
+>>>>>>> Stashed changes
 				PPRINTF( "RX on freq %u Hz at SF %d\r\n", rx_signal_freqence, rx_spreading_value );	
 				PPRINTF("rxWaiting\r\n");	
 				Radio.Rx(0);	
@@ -599,6 +834,73 @@ static void RxData(lora_AppData_t *AppData)
 	
 	switch(rece_temp)
 	{
+<<<<<<< Updated upstream
+=======
+		case 0x00:             // NEW CODE - Received feedback from receiver (DO/RO states)
+		{
+			// Feedback packet: accept_flag=1 means receiver is sending back DO/RO states
+			if(AppData->Buff[2] == 0x01)  // accept_flag=1 in received packet
+			{
+				// Correct parsing based on actual packet format
+				// Byte 3: DO1_flag<<4 | DO2_flag
+				uint8_t received_DO1 = (AppData->Buff[3] & 0xf0) >> 4;
+				uint8_t received_DO2 = (AppData->Buff[3] & 0x0f);
+				
+				// Byte 6: RO1_flag<<4 | RO2_flag  
+				uint8_t received_RO1 = (AppData->Buff[6] & 0xf0) >> 4;
+				uint8_t received_RO2 = (AppData->Buff[6] & 0x0f);
+				
+				PPRINTF("\r\n=== FEEDBACK RECEIVED ===\r\n");
+				PPRINTF("Remote DO1: %d → Mirroring to local DO1\r\n", received_DO1);
+				PPRINTF("Remote DO2: %d → Mirroring to local DO2\r\n", received_DO2);
+				PPRINTF("Remote RO1: %d → Mirroring to local RO1\r\n", received_RO1);
+				PPRINTF("Remote RO2: %d → Mirroring to local RO2\r\n", received_RO2);
+				
+				// NEW CODE - Mirror receiver's DO/RO states to transmitter's DO/RO outputs
+				// Update transmitter's DO1
+				if(received_DO1 == 1)
+					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);
+				else
+					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+				
+				// Update transmitter's DO2
+				if(received_DO2 == 1)
+					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+				else
+					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+				
+				// Update transmitter's RO1
+				if(received_RO1 == 1)
+					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_SET);
+				else
+					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);
+				
+				// Update transmitter's RO2
+				if(received_RO2 == 1)
+					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_SET);
+				else
+					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
+				
+				// Update local state variables
+				DO1_flag = received_DO1;
+				DO2_flag = received_DO2;
+				RO1_flag = received_RO1;
+				RO2_flag = received_RO2;
+				
+				PPRINTF("Local outputs updated to match receiver!\r\n");
+				PPRINTF("=== Confirmation Complete ===\r\n");
+				
+				// Reset accept_flag on transmitter side
+				accept_flag = 0;
+				
+				// NEW CODE - Process any DI changes that occurred during heartbeat cycle
+				// This ensures DI changes are sent immediately instead of waiting for next heartbeat
+				di_queue_process_and_send();
+			}
+			break;
+		}
+		
+>>>>>>> Stashed changes
 		case 0x01:             //received maps of Group TX
 		{		
 			if(!((group_mode==0)&&(group_mode_id!=0)))
@@ -607,6 +909,7 @@ static void RxData(lora_AppData_t *AppData)
 				{
 					if((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00))
 					{
+<<<<<<< Updated upstream
 						uint8_t do1,do2,relay_1,relay_2;
 						
 						do1=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
@@ -617,6 +920,20 @@ static void RxData(lora_AppData_t *AppData)
 						uint8_t level_status1,level_status2;
 						level_status1=AppData->Buff[3]&0x0f;
 						level_status2=AppData->Buff[6]&0x0f;	
+=======
+						if((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00))
+						{
+							uint8_t do1,do2,relay_1,relay_2;
+							
+							do1=HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_12);	
+							do2=HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14);	
+					    relay_1=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);		
+              relay_2=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);							
+					
+							uint8_t level_status1,level_status2;
+							level_status1=AppData->Buff[3]&0x0f;
+							level_status2=AppData->Buff[6]&0x0f;
+>>>>>>> Stashed changes
 						
 						if(AppData->Buff[4]!=0x00)
 						{
@@ -756,6 +1073,7 @@ static void RxData(lora_AppData_t *AppData)
 						RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 						RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);		
 
+<<<<<<< Updated upstream
 						uplink_data_status=1;
 						PPRINTF("Mapping succeeded\r\n");		
 						HAL_Delay(1000); //Need to Wait for the RX window of the TX group to open
@@ -764,6 +1082,29 @@ static void RxData(lora_AppData_t *AppData)
 							IWDG_Refresh();
 							HAL_Delay(2500);
 						}
+=======
+					// NEW CODE - Enhanced feedback mechanism
+					// Set accept_flag to send back DO/RO states as confirmation
+					accept_flag=1;
+					
+					PPRINTF("Mapping succeeded - DO1=%d, DO2=%d, RO1=%d, RO2=%d\r\n", 
+					        DO1_flag, DO2_flag, RO1_flag, RO2_flag);
+					PPRINTF("Sending feedback to transmitter...\r\n");
+					
+					// Trigger feedback TX after RX window delay
+					uplink_data_status=1;
+						
+						// OLD CODE - Blocking delays that prevent radio responsiveness
+						// HAL_Delay(1000); //Need to Wait for the RX window of the TX group to open
+						// for(uint8_t j=0;j<group_mode_id-1;j++)
+						// {
+						//     IWDG_Refresh();
+						//     HAL_Delay(2500);
+						// }
+						
+						// NEW CODE - Non-blocking delay for RX window timing
+						non_blocking_delay_start(&rx_window_delay, 1000, rx_window_callback);
+>>>>>>> Stashed changes
 						if((DO1_flag!=do1)||(DO2_flag!=do2)||(RO1_flag!=relay_1)||(RO2_flag!=relay_2))
 						{
 							if(befor_RODO==1)
@@ -1055,7 +1396,14 @@ static void send_exti(void)
 			{
 				exitflag1=0;
 			}
-		}		
+		}
+		else
+		{
+			// NEW CODE - Radio is busy (heartbeat TX/RX active), queue the DI1 change
+			PPRINTF("Radio busy during DI1 change - queuing state\r\n");
+			di_queue_capture_state(1);
+			exitflag1=0;  // Clear flag since we've queued it
+		}
 	}
 	
 	if(exitflag2==1)
@@ -1172,6 +1520,13 @@ static void send_exti(void)
 					exitflag2=0;
 				}
 			}
+			else
+			{
+				// NEW CODE - Radio is busy (heartbeat TX/RX active), queue the DI2 change
+				PPRINTF("Radio busy during DI2 change - queuing state\r\n");
+				di_queue_capture_state(2);
+				exitflag2=0;  // Clear flag since we've queued it
+			}
 	  }							
 	}	
 }
@@ -1193,11 +1548,39 @@ static void lora_test_init(void)
 static void test_OnTxDone( void )
 {
     Radio.Sleep( );
+<<<<<<< Updated upstream
 	  rx_waiting_flag=1;
+=======
+    // OLD CODE - Race condition prone
+    // rx_waiting_flag=1;
+    
+    // NEW CODE - Reset accept_flag after sending feedback
+    if(accept_flag == 1)
+    {
+        accept_flag = 0;
+        PPRINTF("Feedback sent, returning to normal mode\r\n");
+        
+        // NEW CODE - Process any DI changes that occurred during feedback transmission
+        // This ensures DI changes on the receiver side are also sent immediately
+        di_queue_process_and_send();
+    }
+    
+    // NEW CODE - Atomic state transition
+    radio_set_state(RADIO_STATE_RX_PREPARING);
+    
+    // NEW CODE - Test tracking
+    if (test_session.test_active) {
+        test_session.successful_tx++;
+        test_log_event("TX completed successfully");
+    }
+>>>>>>> Stashed changes
 }
 
 static void test_OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 {
+	// NEW CODE - Reset watchdog on any received packet
+	watchdog_receive_ping();
+	
 	if((payload[0]==group_id[0])&&(payload[1]==group_id[1])&&(payload[2]==group_id[2])&&(payload[3]==group_id[3])
 	   &&(payload[4]==group_id[4])&&(payload[5]==group_id[5])&&(payload[6]==group_id[6])&&(payload[7]==group_id[7]))
 	{
@@ -1342,4 +1725,811 @@ static void DO_control(void)
 		lora_wait_flags=1;
 	}	
 }
+<<<<<<< Updated upstream
+=======
+
+// NEW CODE - Atomic radio state management implementation
+static bool radio_set_state(radio_state_t new_state)
+{
+    // Disable interrupts to ensure atomic operation
+    __disable_irq();
+    
+    radio_state_t current_state = radio_state;
+    bool success = false;
+    
+    // State transition validation
+    switch(current_state) {
+        case RADIO_STATE_IDLE:
+            success = (new_state == RADIO_STATE_TX_PREPARING || 
+                      new_state == RADIO_STATE_RX_PREPARING ||
+                      new_state == RADIO_STATE_ERROR);
+            break;
+            
+        case RADIO_STATE_TX_PREPARING:
+            success = (new_state == RADIO_STATE_TX_ACTIVE || 
+                      new_state == RADIO_STATE_IDLE ||
+                      new_state == RADIO_STATE_ERROR);
+            break;
+            
+        case RADIO_STATE_TX_ACTIVE:
+            success = (new_state == RADIO_STATE_RX_PREPARING || 
+                      new_state == RADIO_STATE_IDLE ||
+                      new_state == RADIO_STATE_ERROR);
+            break;
+            
+        case RADIO_STATE_RX_PREPARING:
+            // OLD CODE - Didn't allow RX to be interrupted by urgent TX (DI1/DI2)
+            // success = (new_state == RADIO_STATE_RX_ACTIVE || 
+            //           new_state == RADIO_STATE_IDLE ||
+            //           new_state == RADIO_STATE_ERROR);
+            
+            // NEW CODE - Allow RX to be interrupted for urgent TX
+            success = (new_state == RADIO_STATE_RX_ACTIVE || 
+                      new_state == RADIO_STATE_TX_PREPARING ||
+                      new_state == RADIO_STATE_IDLE ||
+                      new_state == RADIO_STATE_ERROR);
+            break;
+            
+        case RADIO_STATE_RX_ACTIVE:
+            // OLD CODE - Didn't allow RX to be interrupted by urgent TX (DI1/DI2)
+            // success = (new_state == RADIO_STATE_IDLE || 
+            //           new_state == RADIO_STATE_ERROR);
+            
+            // NEW CODE - Allow RX to be interrupted for urgent TX
+            success = (new_state == RADIO_STATE_TX_PREPARING ||
+                      new_state == RADIO_STATE_IDLE || 
+                      new_state == RADIO_STATE_ERROR);
+            break;
+            
+        case RADIO_STATE_ERROR:
+            success = (new_state == RADIO_STATE_IDLE);
+            break;
+            
+        default:
+            success = false;
+            break;
+    }
+    
+    if(success) {
+        radio_state = new_state;
+        radio_state_changed = true;
+    }
+    
+    // Re-enable interrupts
+    __enable_irq();
+    
+    return success;
+}
+
+static radio_state_t radio_get_state(void)
+{
+    return radio_state;
+}
+
+bool radio_is_idle(void)
+{
+    return (radio_state == RADIO_STATE_IDLE);
+}
+
+void radio_force_idle(void)
+{
+    // Stop radio operations
+    Radio.Sleep();
+    
+    // Force state to idle
+    __disable_irq();
+    radio_state = RADIO_STATE_IDLE;
+    radio_state_changed = true;
+    __enable_irq();
+    
+    PPRINTF("Radio forced to IDLE state\r\n");
+}
+
+static bool radio_can_transmit(void)
+{
+    // OLD CODE - Too restrictive, prevented DI1/DI2 interrupts during RX
+    // return (radio_state == RADIO_STATE_IDLE || radio_state == RADIO_STATE_TX_PREPARING);
+    
+    // NEW CODE - Allow transmission unless already transmitting
+    // DI1/DI2 interrupts can interrupt RX to send urgent messages
+    return (radio_state != RADIO_STATE_TX_ACTIVE);
+}
+
+static bool radio_can_receive(void)
+{
+    return (radio_state == RADIO_STATE_IDLE || radio_state == RADIO_STATE_RX_PREPARING);
+}
+
+// NEW CODE - Non-blocking delay implementation
+static uint32_t get_system_tick_ms(void)
+{
+    return HAL_GetTick();
+}
+
+static void non_blocking_delay_start(non_blocking_delay_t* delay, uint32_t duration_ms, void (*callback)(void))
+{
+    delay->active = true;
+    delay->start_time = get_system_tick_ms();
+    delay->duration_ms = duration_ms;
+    delay->callback = callback;
+}
+
+static bool non_blocking_delay_check(non_blocking_delay_t* delay)
+{
+    if (!delay->active) {
+        return false;
+    }
+    
+    uint32_t current_time = get_system_tick_ms();
+    uint32_t elapsed = current_time - delay->start_time;
+    
+    if (elapsed >= delay->duration_ms) {
+        delay->active = false;
+        if (delay->callback) {
+            delay->callback();
+        }
+        return true;
+    }
+    
+    return false;
+}
+
+static void non_blocking_delay_stop(non_blocking_delay_t* delay)
+{
+    delay->active = false;
+}
+
+// Callback functions for non-blocking delays
+static void radio_settle_callback(void)
+{
+    // OLD CODE - Simple state transition
+    // radio_set_state(RADIO_STATE_RX_PREPARING);
+    
+    // NEW CODE - Enhanced callback with success tracking
+    radio_set_state(RADIO_STATE_RX_PREPARING);
+    
+    // Reset consecutive errors on successful state transition
+    if (error_stats.consecutive_errors > 0) {
+        error_stats.consecutive_errors = 0;
+        PPRINTF("Radio settled successfully, error count reset\r\n");
+    }
+}
+
+static void rx_window_callback(void)
+{
+    // Start group timing delay if needed
+    if (group_mode_id > 1) {
+        group_timing_counter = 0;
+        non_blocking_delay_start(&group_timing_delay, 2500, group_timing_callback);
+    } else {
+        // No group timing needed, proceed with normal operation
+        uplink_data_status = 1;
+    }
+}
+
+static void group_timing_callback(void)
+{
+    group_timing_counter++;
+    IWDG_Refresh();
+    
+    if (group_timing_counter < (group_mode_id - 1)) {
+        // Continue with next timing delay
+        non_blocking_delay_start(&group_timing_delay, 2500, group_timing_callback);
+    } else {
+        // All group timing delays completed
+        uplink_data_status = 1;
+    }
+}
+
+// NEW CODE - Enhanced error recovery implementation
+static void error_recovery_init(void)
+{
+    // Initialize error statistics
+    error_stats.tx_failures = 0;
+    error_stats.rx_failures = 0;
+    error_stats.consecutive_errors = 0;
+    error_stats.max_retries = 3;
+    error_stats.last_error_time = 0;
+    error_stats.fallback_mode = false;
+    
+    // Store primary radio parameters
+    primary_params.power_level = txp_value;
+    primary_params.spreading_factor = tx_spreading_value;
+    primary_params.bandwidth = bandwidth_value;
+    primary_params.coding_rate = codingrate_value;
+    
+    // Set fallback parameters (more conservative)
+    fallback_params.power_level = (txp_value > 10) ? (txp_value - 2) : txp_value;
+    fallback_params.spreading_factor = (tx_spreading_value < 12) ? (tx_spreading_value + 1) : tx_spreading_value;
+    fallback_params.bandwidth = bandwidth_value; // Keep same bandwidth
+    fallback_params.coding_rate = (codingrate_value < 4) ? (codingrate_value + 1) : codingrate_value;
+    
+    PPRINTF("Error recovery system initialized\r\n");
+}
+
+static void error_recovery_reset(void)
+{
+    error_stats.tx_failures = 0;
+    error_stats.rx_failures = 0;
+    error_stats.consecutive_errors = 0;
+    error_stats.last_error_time = 0;
+    
+    if (error_stats.fallback_mode) {
+        error_recovery_switch_to_primary();
+    }
+    
+    PPRINTF("Error recovery statistics reset\r\n");
+}
+
+static void error_recovery_handle_tx_failure(void)
+{
+    error_stats.tx_failures++;
+    error_stats.consecutive_errors++;
+    error_stats.last_error_time = get_system_tick_ms();
+    
+    error_recovery_log_error("TX_FAILURE");
+    
+    PPRINTF("TX failure #%d, consecutive errors: %d\r\n", 
+            error_stats.tx_failures, error_stats.consecutive_errors);
+    
+    // Switch to fallback parameters if too many failures
+    if (error_stats.consecutive_errors >= 3 && !error_stats.fallback_mode) {
+        error_recovery_switch_to_fallback();
+    }
+}
+
+static void error_recovery_handle_rx_failure(void)
+{
+    error_stats.rx_failures++;
+    error_stats.consecutive_errors++;
+    error_stats.last_error_time = get_system_tick_ms();
+    
+    error_recovery_log_error("RX_FAILURE");
+    
+    PPRINTF("RX failure #%d, consecutive errors: %d\r\n", 
+            error_stats.rx_failures, error_stats.consecutive_errors);
+    
+    // Switch to fallback parameters if too many failures
+    if (error_stats.consecutive_errors >= 3 && !error_stats.fallback_mode) {
+        error_recovery_switch_to_fallback();
+    }
+}
+
+static void error_recovery_switch_to_fallback(void)
+{
+    if (!error_stats.fallback_mode) {
+        error_stats.fallback_mode = true;
+        use_fallback_params = true;
+        
+        PPRINTF("Switching to fallback radio parameters\r\n");
+        PPRINTF("Fallback: Power=%d, SF=%d, BW=%d, CR=%d\r\n",
+                fallback_params.power_level, fallback_params.spreading_factor,
+                fallback_params.bandwidth, fallback_params.coding_rate);
+    }
+}
+
+static void error_recovery_switch_to_primary(void)
+{
+    if (error_stats.fallback_mode) {
+        error_stats.fallback_mode = false;
+        use_fallback_params = false;
+        
+        PPRINTF("Switching back to primary radio parameters\r\n");
+        PPRINTF("Primary: Power=%d, SF=%d, BW=%d, CR=%d\r\n",
+                primary_params.power_level, primary_params.spreading_factor,
+                primary_params.bandwidth, primary_params.coding_rate);
+    }
+}
+
+static bool error_recovery_should_retry(void)
+{
+    // Don't retry if we've exceeded max retries
+    if (error_stats.consecutive_errors >= error_stats.max_retries) {
+        return false;
+    }
+    
+    // Don't retry if too recent (avoid rapid retries)
+    uint32_t current_time = get_system_tick_ms();
+    if ((current_time - error_stats.last_error_time) < 1000) {
+        return false;
+    }
+    
+    return true;
+}
+
+static void error_recovery_log_error(const char* error_type)
+{
+    PPRINTF("ERROR: %s at time %lu\r\n", error_type, get_system_tick_ms());
+    PPRINTF("Stats: TX_fail=%d, RX_fail=%d, Consecutive=%d\r\n",
+            error_stats.tx_failures, error_stats.rx_failures, error_stats.consecutive_errors);
+}
+
+// Enhanced radio parameter application
+static void apply_radio_parameters(void)
+{
+    // OLD CODE - Used same parameters for both TX and RX (WRONG!)
+    // This broke systems with different TX/RX frequencies and spreading factors
+    // radio_params_t* params = use_fallback_params ? &fallback_params : &primary_params;
+    // Radio.SetTxConfig(MODEM_LORA, params->power_level, 0, params->bandwidth, 
+    //                  params->spreading_factor, params->coding_rate, preamble_value, 
+    //                  false, true, 0, 0, false, 3000);
+    // Radio.SetRxConfig(MODEM_LORA, params->bandwidth, params->spreading_factor, 
+    //                  params->coding_rate, 0, preamble_value, 5, false, 0, true, 0, 0, false, true);
+    
+    // NEW CODE - Use actual TX/RX specific parameters from configuration
+    // Apply TX parameters with original TX spreading factor
+    Radio.SetTxConfig(MODEM_LORA, txp_value, 0, bandwidth_value, 
+                     tx_spreading_value, codingrate_value, preamble_value, 
+                     false, true, 0, 0, false, 3000);
+    
+    // Apply RX parameters with original RX spreading factor
+    Radio.SetRxConfig(MODEM_LORA, bandwidth_value, rx_spreading_value, 
+                     codingrate_value, 0, preamble_value, 5, false, 0, true, 0, 0, false, true);
+}
+
+// NEW CODE - Comprehensive testing implementation
+static void test_init_session(uint8_t scenario, uint32_t duration_ms)
+{
+    test_session.test_start_time = get_system_tick_ms();
+    test_session.test_duration_ms = duration_ms;
+    test_session.test_scenario = scenario;
+    test_session.test_active = true;
+    test_session.tx_attempts = 0;
+    test_session.rx_attempts = 0;
+    test_session.successful_tx = 0;
+    test_session.successful_rx = 0;
+    test_session.errors_handled = 0;
+    
+    PPRINTF("\r\n=== TEST SESSION STARTED ===\r\n");
+    PPRINTF("Scenario: %d, Duration: %lu ms\r\n", scenario, duration_ms);
+    PPRINTF("Time: %lu\r\n", test_session.test_start_time);
+}
+
+static void test_log_event(const char* event)
+{
+    if (!test_session.test_active) return;
+    
+    uint32_t elapsed = get_system_tick_ms() - test_session.test_start_time;
+    PPRINTF("[TEST %lu] %s\r\n", elapsed, event);
+}
+
+static void test_print_results(void)
+{
+    if (!test_session.test_active) return;
+    
+    uint32_t elapsed = get_system_tick_ms() - test_session.test_start_time;
+    uint32_t tx_success_rate = (test_session.tx_attempts > 0) ? 
+                               (test_session.successful_tx * 100) / test_session.tx_attempts : 0;
+    uint32_t rx_success_rate = (test_session.rx_attempts > 0) ? 
+                               (test_session.successful_rx * 100) / test_session.rx_attempts : 0;
+    
+    PPRINTF("\r\n=== TEST RESULTS ===\r\n");
+    PPRINTF("Scenario: %d\r\n", test_session.test_scenario);
+    PPRINTF("Duration: %lu ms\r\n", elapsed);
+    PPRINTF("TX Attempts: %lu, Success: %lu (%lu%%)\r\n", 
+            test_session.tx_attempts, test_session.successful_tx, tx_success_rate);
+    PPRINTF("RX Attempts: %lu, Success: %lu (%lu%%)\r\n", 
+            test_session.rx_attempts, test_session.successful_rx, rx_success_rate);
+    PPRINTF("Errors Handled: %lu\r\n", test_session.errors_handled);
+    PPRINTF("Error Recovery Stats: TX_fail=%d, RX_fail=%d, Consecutive=%d\r\n",
+            error_stats.tx_failures, error_stats.rx_failures, error_stats.consecutive_errors);
+    PPRINTF("Fallback Mode: %s\r\n", error_stats.fallback_mode ? "ACTIVE" : "INACTIVE");
+    PPRINTF("Current Radio State: %d\r\n", radio_get_state());
+    PPRINTF("=== END TEST RESULTS ===\r\n");
+    
+    test_session.test_active = false;
+}
+
+static void test_validate_state_machine(void)
+{
+    PPRINTF("\r\n=== STATE MACHINE VALIDATION ===\r\n");
+    
+    // Test valid state transitions
+    radio_state_t original_state = radio_get_state();
+    
+    // Test IDLE -> TX_PREPARING
+    if (radio_set_state(RADIO_STATE_TX_PREPARING)) {
+        test_log_event("✓ IDLE -> TX_PREPARING: SUCCESS");
+    } else {
+        test_log_event("✗ IDLE -> TX_PREPARING: FAILED");
+    }
+    
+    // Test TX_PREPARING -> TX_ACTIVE
+    if (radio_set_state(RADIO_STATE_TX_ACTIVE)) {
+        test_log_event("✓ TX_PREPARING -> TX_ACTIVE: SUCCESS");
+    } else {
+        test_log_event("✗ TX_PREPARING -> TX_ACTIVE: FAILED");
+    }
+    
+    // Test TX_ACTIVE -> RX_PREPARING
+    if (radio_set_state(RADIO_STATE_RX_PREPARING)) {
+        test_log_event("✓ TX_ACTIVE -> RX_PREPARING: SUCCESS");
+    } else {
+        test_log_event("✗ TX_ACTIVE -> RX_PREPARING: FAILED");
+    }
+    
+    // Test RX_PREPARING -> RX_ACTIVE
+    if (radio_set_state(RADIO_STATE_RX_ACTIVE)) {
+        test_log_event("✓ RX_PREPARING -> RX_ACTIVE: SUCCESS");
+    } else {
+        test_log_event("✗ RX_PREPARING -> RX_ACTIVE: FAILED");
+    }
+    
+    // Test RX_ACTIVE -> IDLE
+    if (radio_set_state(RADIO_STATE_IDLE)) {
+        test_log_event("✓ RX_ACTIVE -> IDLE: SUCCESS");
+    } else {
+        test_log_event("✗ RX_ACTIVE -> IDLE: FAILED");
+    }
+    
+    // Test invalid transitions
+    if (!radio_set_state(RADIO_STATE_TX_ACTIVE)) {
+        test_log_event("✓ Invalid IDLE -> TX_ACTIVE: CORRECTLY REJECTED");
+    } else {
+        test_log_event("✗ Invalid IDLE -> TX_ACTIVE: INCORRECTLY ALLOWED");
+    }
+    
+    // Restore original state
+    radio_set_state(original_state);
+    PPRINTF("=== STATE MACHINE VALIDATION COMPLETE ===\r\n");
+}
+
+static void test_simulate_radio_errors(void)
+{
+    PPRINTF("\r\n=== RADIO ERROR SIMULATION ===\r\n");
+    
+    // Simulate TX timeout
+    test_log_event("Simulating TX timeout...");
+    test_OnTxTimeout();
+    test_session.errors_handled++;
+    
+    // Simulate RX timeout
+    test_log_event("Simulating RX timeout...");
+    test_OnRxTimeout();
+    test_session.errors_handled++;
+    
+    // Simulate RX error
+    test_log_event("Simulating RX error...");
+    test_OnRxError();
+    test_session.errors_handled++;
+    
+    PPRINTF("=== RADIO ERROR SIMULATION COMPLETE ===\r\n");
+}
+
+static void test_validate_error_recovery(void)
+{
+    PPRINTF("\r\n=== ERROR RECOVERY VALIDATION ===\r\n");
+    
+    // Reset error stats
+    error_recovery_reset();
+    test_log_event("Error stats reset");
+    
+    // Simulate multiple failures
+    for (int i = 0; i < 5; i++) {
+        error_recovery_handle_tx_failure();
+        test_log_event("TX failure simulated");
+    }
+    
+    // Check if fallback mode activated
+    if (error_stats.fallback_mode) {
+        test_log_event("✓ Fallback mode activated correctly");
+    } else {
+        test_log_event("✗ Fallback mode not activated");
+    }
+    
+    // Test retry logic
+    if (error_recovery_should_retry()) {
+        test_log_event("✗ Retry should be disabled after 5 failures");
+    } else {
+        test_log_event("✓ Retry correctly disabled after max failures");
+    }
+    
+    // Reset and test recovery
+    error_recovery_reset();
+    if (!error_stats.fallback_mode) {
+        test_log_event("✓ Error recovery reset successful");
+    } else {
+        test_log_event("✗ Error recovery reset failed");
+    }
+    
+    PPRINTF("=== ERROR RECOVERY VALIDATION COMPLETE ===\r\n");
+}
+
+static void test_validate_non_blocking_delays(void)
+{
+    PPRINTF("\r\n=== NON-BLOCKING DELAY VALIDATION ===\r\n");
+    
+    // Test delay start
+    non_blocking_delay_start(&radio_settle_delay, 100, radio_settle_callback);
+    test_log_event("Non-blocking delay started");
+    
+    // Test delay check (should not complete immediately)
+    if (!non_blocking_delay_check(&radio_settle_delay)) {
+        test_log_event("✓ Delay correctly not completed immediately");
+    } else {
+        test_log_event("✗ Delay completed too quickly");
+    }
+    
+    // Test delay stop
+    non_blocking_delay_stop(&radio_settle_delay);
+    test_log_event("Non-blocking delay stopped");
+    
+    PPRINTF("=== NON-BLOCKING DELAY VALIDATION COMPLETE ===\r\n");
+}
+
+// Test command handler
+void test_run_comprehensive_test(void)
+{
+    PPRINTF("\r\n=== COMPREHENSIVE TEST SUITE ===\r\n");
+    
+    test_init_session(1, 60000); // 1 minute test
+    
+    // Run all validation tests
+    test_validate_state_machine();
+    test_validate_error_recovery();
+    test_validate_non_blocking_delays();
+    test_simulate_radio_errors();
+    
+    // Print final results
+    test_print_results();
+    
+    PPRINTF("=== COMPREHENSIVE TEST SUITE COMPLETE ===\r\n");
+}
+
+// NEW CODE - Watchdog System Implementation
+static void watchdog_init(void)
+{
+    // Initialize watchdog timer
+    TimerInit(&WatchdogTimer, watchdog_timer_callback);
+    
+    if(watchdog.enabled)
+    {
+        watchdog.last_received_time = get_system_tick_ms();
+        watchdog.missed_count = 0;
+        watchdog.link_active = true;
+        watchdog.safe_state_active = false;
+        
+        // Start watchdog timer
+        TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
+        TimerStart(&WatchdogTimer);
+        
+        PPRINTF("Watchdog enabled: %d second interval, max %d missed\r\n", 
+                watchdog.interval_seconds, watchdog.max_missed);
+    }
+    else
+    {
+        PPRINTF("Watchdog disabled\r\n");
+    }
+}
+
+static void watchdog_timer_callback(void)
+{
+    if(!watchdog.enabled) return;
+    
+    uint32_t current_time = get_system_tick_ms();
+    uint32_t time_since_last = current_time - watchdog.last_received_time;
+    
+    // Timer fired - means interval elapsed without packet
+    watchdog.missed_count++;
+    PPRINTF("!!! Watchdog: No signal for %lu ms (missed: %d/%d) !!!\r\n", 
+            time_since_last, watchdog.missed_count, watchdog.max_missed);
+    
+    // Check if we've exceeded max missed pings
+    if(watchdog.missed_count >= watchdog.max_missed)
+    {
+        if(!watchdog.safe_state_active)
+        {
+            watchdog_trigger_safe_state();
+        }
+    }
+    
+    // Restart watchdog timer for next check
+    TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
+    TimerStart(&WatchdogTimer);
+}
+
+static void watchdog_reset(void)
+{
+    if(!watchdog.enabled) return;
+    
+    watchdog.last_received_time = get_system_tick_ms();
+    
+    // Check if we're recovering from safe state
+    if(watchdog.safe_state_active)
+    {
+        PPRINTF("\r\n=== WATCHDOG: Link Restored! ===\r\n");
+        watchdog.safe_state_active = false;
+        watchdog.link_active = true;
+        PPRINTF("Restoring outputs based on transmitter state...\r\n");
+    }
+    
+    // Reset missed counter
+    if(watchdog.missed_count > 0)
+    {
+        PPRINTF("Watchdog: Link OK (was missed: %d)\r\n", watchdog.missed_count);
+        watchdog.missed_count = 0;
+    }
+    
+    // Restart watchdog timer (this is critical!)
+    TimerStop(&WatchdogTimer);
+    TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
+    TimerStart(&WatchdogTimer);
+}
+
+static void watchdog_trigger_safe_state(void)
+{
+    PPRINTF("\r\n!!! WATCHDOG TIMEOUT !!!\r\n");
+    PPRINTF("No signal from transmitter for %d consecutive checks\r\n", watchdog.max_missed);
+    PPRINTF("Triggering SAFE STATE - Setting all outputs to LOW\r\n");
+    
+    // Set all DO outputs to LOW (safe state)
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);  // DO1 = LOW
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);  // DO2 = LOW
+    
+    // Set all RO outputs to LOW (safe state)
+    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);  // RO1 = LOW
+    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);  // RO2 = LOW
+    
+    // Update state variables
+    DO1_flag = 0;
+    DO2_flag = 0;
+    RO1_flag = 0;
+    RO2_flag = 0;
+    
+    watchdog.safe_state_active = true;
+    watchdog.link_active = false;
+    
+    PPRINTF("All outputs set to SAFE STATE (LOW)\r\n");
+    PPRINTF("Waiting for transmitter to reconnect...\r\n");
+}
+
+// ============================================================================
+// DI STATE QUEUE IMPLEMENTATION
+// ============================================================================
+// Purpose: Queue DI state changes that occur during heartbeat TX/RX cycles
+//          and send them immediately after heartbeat feedback is received
+
+/**
+ * @brief Capture DI state change into queue
+ * @param di_channel: 1 for DI1, 2 for DI2
+ * 
+ * Called from GPIO interrupt when DI changes during heartbeat transmission.
+ * Captures the current state and timestamps it for immediate processing
+ * after the heartbeat cycle completes.
+ */
+static void di_queue_capture_state(uint8_t di_channel)
+{
+    uint32_t current_time = get_system_tick_ms();
+    
+    if(di_channel == 1)
+    {
+        // Read current DI1 state
+        GPIO_PinState current_di1 = HAL_GPIO_ReadPin(GPIO_EXTI_PORT, GPIO_EXTI_PIN);
+        
+        di_queue.di1_changed = true;
+        di_queue.di1_state = (current_di1 == GPIO_PIN_SET) ? 1 : 0;
+        di_queue.change_time = current_time;
+        di_queue.pending_transmission = true;
+        
+        PPRINTF_VERBOSE("DI1 change queued: state=%d, time=%lu\r\n", 
+                       di_queue.di1_state, current_time);
+    }
+    else if(di_channel == 2)
+    {
+        // Read current DI2 state
+        GPIO_PinState current_di2 = HAL_GPIO_ReadPin(GPIO_EXTI2_PORT, GPIO_EXTI2_PIN);
+        
+        di_queue.di2_changed = true;
+        di_queue.di2_state = (current_di2 == GPIO_PIN_SET) ? 1 : 0;
+        di_queue.change_time = current_time;
+        di_queue.pending_transmission = true;
+        
+        PPRINTF_VERBOSE("DI2 change queued: state=%d, time=%lu\r\n", 
+                       di_queue.di2_state, current_time);
+    }
+}
+
+/**
+ * @brief Clear the DI state queue
+ * 
+ * Called after successfully processing queued changes or when resetting state.
+ */
+static void di_queue_clear(void)
+{
+    di_queue.di1_changed = false;
+    di_queue.di2_changed = false;
+    di_queue.di1_state = 0;
+    di_queue.di2_state = 0;
+    di_queue.change_time = 0;
+    di_queue.pending_transmission = false;
+}
+
+/**
+ * @brief Check if there are pending DI changes to transmit
+ * @return true if changes are queued, false otherwise
+ */
+static bool di_queue_has_pending(void)
+{
+    return di_queue.pending_transmission;
+}
+
+/**
+ * @brief Process queued DI changes and trigger immediate transmission
+ * 
+ * Called after heartbeat feedback is received. This ensures DI changes
+ * that occurred during the heartbeat cycle are sent immediately instead
+ * of waiting for the next heartbeat.
+ */
+static void di_queue_process_and_send(void)
+{
+    if(!di_queue_has_pending())
+    {
+        return;  // Nothing to do
+    }
+    
+    uint32_t queue_age = get_system_tick_ms() - di_queue.change_time;
+    
+    PPRINTF("Processing queued DI changes (age: %lu ms)\r\n", queue_age);
+    
+    if(di_queue.di1_changed)
+    {
+        PPRINTF("  DI1: %d\r\n", di_queue.di1_state);
+        exitflag1 = 1;  // Set flag to trigger transmission
+    }
+    
+    if(di_queue.di2_changed)
+    {
+        PPRINTF("  DI2: %d\r\n", di_queue.di2_state);
+        exitflag2 = 1;  // Set flag to trigger transmission
+    }
+    
+    // Trigger immediate TX of queued changes
+    uplink_data_status = 1;
+    lora_wait_flags = 1;
+    
+    // Clear the queue
+    di_queue_clear();
+    
+    PPRINTF("Queued DI changes sent immediately (not waiting for next heartbeat)\r\n");
+}
+
+static void watchdog_send_ping(void)
+{
+    // Receiver sends a ping request to transmitter
+    // This is a minimal packet to check if transmitter is alive
+    PPRINTF("Watchdog: Sending ping to check transmitter...\r\n");
+    
+    // Set a flag to send a ping packet
+    // (Transmitter should respond with its current DI states)
+    // This is handled through normal TX mechanism
+}
+
+static void watchdog_receive_ping(void)
+{
+    // Called when receiver gets a packet from transmitter
+    // Resets the watchdog timer
+    watchdog_reset();
+}
+
+static void watchdog_check(void)
+{
+    if(!watchdog.enabled) return;
+    
+    // Periodic check in main loop (optional, timer-based is primary)
+    uint32_t current_time = get_system_tick_ms();
+    uint32_t time_since_last = current_time - watchdog.last_received_time;
+    
+    // Visual indicator of link status
+    static uint32_t last_status_print = 0;
+    if((current_time - last_status_print) > 60000)  // Print every 60 seconds
+    {
+        last_status_print = current_time;
+        if(watchdog.link_active)
+        {
+            PPRINTF("Watchdog: Link OK (last signal: %lu ms ago)\r\n", time_since_last);
+        }
+    }
+}
+
+>>>>>>> Stashed changes
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

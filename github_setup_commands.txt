@@ -1,0 +1,41 @@
+GitHub Setup Commands
+=====================
+
+After creating the repository on GitHub, run these commands:
+
+IMPORTANT: Replace YOUR_USERNAME with your actual GitHub username!
+
+# Navigate to project directory
+cd "C:\Users\Wagne\OneDrive\Programmierungen\LORA P2P\LT-22222-L"
+
+# Add GitHub as remote (REPLACE YOUR_USERNAME!)
+git remote add origin https://github.com/YOUR_USERNAME/LT-22222-L-Enhanced.git
+
+# Verify remote was added
+git remote -v
+
+# Push to GitHub (first time)
+git push -u origin main
+
+# For subsequent pushes (after more commits)
+git push
+
+=================
+TROUBLESHOOTING
+=================
+
+If you get authentication errors:
+1. GitHub may ask you to authenticate
+2. Since Cursor is already connected to GitHub, it should work automatically
+3. If not, you may need to create a Personal Access Token (PAT):
+   - Go to GitHub → Settings → Developer settings → Personal access tokens
+   - Generate new token (classic)
+   - Select scopes: "repo" (full control of private repositories)
+   - Copy the token
+   - Use it as password when git asks
+
+Alternative (easier):
+Install GitHub Desktop app - it handles authentication automatically:
+https://desktop.github.com/
+
+
