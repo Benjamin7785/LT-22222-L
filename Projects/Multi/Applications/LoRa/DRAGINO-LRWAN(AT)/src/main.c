@@ -1981,7 +1981,21 @@ static bool radio_can_receive(void)
 // NEW CODE - Non-blocking delay implementation
 static uint32_t get_system_tick_ms(void)
 {
-    return HAL_GetTick();
+    static uint32_t last_tick = 0;
+    static uint32_t call_count = 0;
+    
+    uint32_t current_tick = HAL_GetTick();
+    
+    // Debug: Log every 100th call to see if tick is incrementing
+    call_count++;
+    if(call_count % 100 == 0)
+    {
+        PPRINTF_VERBOSE("DEBUG: HAL_GetTick() = %lu (delta=%lu, calls=%lu)\r\n", 
+                       current_tick, current_tick - last_tick, call_count);
+        last_tick = current_tick;
+    }
+    
+    return current_tick;
 }
 
 static void non_blocking_delay_start(non_blocking_delay_t* delay, uint32_t duration_ms, void (*callback)(void))
