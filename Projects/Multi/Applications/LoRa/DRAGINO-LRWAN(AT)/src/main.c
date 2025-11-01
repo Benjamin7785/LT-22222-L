@@ -505,10 +505,7 @@ int main( void )
 				sending_flag=1;
 				Radio.SetChannel( tx_signal_freqence );	
 				Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );	
-				uint32_t tx_time = HAL_GetTick();
-				uint32_t counter_before = uplinkcount;
-				uplinkcount++;
-				PPRINTF("\r\n***** UpLinkCounter= %u (was %u) at %lu ms *****\n\r", uplinkcount, counter_before, tx_time );
+				PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount++ );
 				PPRINTF( "TX on freq %u Hz at SF %d\r\n", tx_signal_freqence, tx_spreading_value );
 				
 				// Transition to TX_ACTIVE state after radio configured, before sending
@@ -516,14 +513,14 @@ int main( void )
 				
 				if(syncDI1DI2_send_flag==1)
 				{
-					PPRINTF("TX Type: SYNC\r\n");
+					PPRINTF_VERBOSE("TX Type: SYNC\r\n");
 					Send_sync();
 					syncDI1DI2_send_flag=0;
 					exitflag1=0;
 				}
 				else if(retransmission_flag==1)
 				{	
-					PPRINTF("TX Type: RETRANSMISSION\r\n");
+					PPRINTF_VERBOSE("TX Type: RETRANSMISSION\r\n");
 					uint32_t crc_check;
 					txDataBuff[9]= request_flag;
 					crc_check=crc32(txDataBuff,txBufferSize-4);
@@ -536,15 +533,14 @@ int main( void )
 				}			
 				else if(test_uplink_status==1)		
 				{
-					PPRINTF("TX Type: TEST\r\n");
+					PPRINTF_VERBOSE("TX Type: TEST\r\n");
 					Send_test();
 					test_uplink_status=0;
 					exitflag1=0;
 				}				
 				else
 				{
-					PPRINTF("TX Type: NORMAL (exitflag1=%d, exitflag2=%d, heartbeat=%d)\r\n", 
-					        exitflag1, exitflag2, (exitflag1==0 && exitflag2==0));
+					PPRINTF_VERBOSE("TX: %s\r\n", (exitflag1==0 && exitflag2==0) ? "Heartbeat" : "DI change");
 					Send_TX();
 				}
 				
@@ -638,17 +634,12 @@ static void Send_TX( void )
 	if(accept_flag==0)  // If we're the transmitter (not sending feedback)
 	{
 		request_flag=1;
-		PPRINTF("Send_TX: Setting request_flag=1 (accept_flag=%d)\r\n", accept_flag);
-	}
-	else
-	{
-		PPRINTF("Send_TX: Sending FEEDBACK (accept_flag=%d, request_flag=%d)\r\n", accept_flag, request_flag);
 	}
 	
 	txDataBuff[i++]= request_flag;	
 	txDataBuff[i++]= accept_flag;	
 	
-	PPRINTF("Packet bytes 9-10: request_flag=%d, accept_flag=%d\r\n", request_flag, accept_flag);	
+	PPRINTF_VERBOSE("Flags: request=%d, accept=%d\r\n", request_flag, accept_flag);	
 	
 	if(accept_flag==0)
 	{
@@ -657,7 +648,7 @@ static void Send_TX( void )
 		if(use_queued_di_states && exitflag1==1)
 		{
 			DI1_flag = queued_di1_state;
-			PPRINTF("Using QUEUED DI1 state: %d\r\n", DI1_flag);
+			PPRINTF_VERBOSE("Queued DI1=%d\r\n", DI1_flag);
 		}
 		else
 		{
@@ -672,7 +663,7 @@ static void Send_TX( void )
 		RO1_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 		RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);
 		txDataBuff[i++]= RO1_flag<<4 | RO2_flag;  // Send RO1/RO2, not DO1/DO2
-		PPRINTF("Feedback byte 3: RO1=%d, RO2=%d (DOs are local)\r\n", RO1_flag, RO2_flag);
+		PPRINTF_VERBOSE("TX Feedback: RO1=%d, RO2=%d\r\n", RO1_flag, RO2_flag);
 	}
 	
 	if((exitflag1==1)&&(request_flag!=0))
@@ -692,7 +683,7 @@ static void Send_TX( void )
 		if(use_queued_di_states && exitflag2==1)
 		{
 			DI2_flag = queued_di2_state;
-			PPRINTF("Using QUEUED DI2 state: %d\r\n", DI2_flag);
+			PPRINTF_VERBOSE("Queued DI2=%d\r\n", DI2_flag);
 		}
 		else
 		{
@@ -737,7 +728,6 @@ static void Send_TX( void )
 	if(use_queued_di_states)
 	{
 		use_queued_di_states = false;
-		PPRINTF("Queued DI states used in TX, flag cleared\r\n");
 	}
 	
 	Radio.Send( txDataBuff, txBufferSize );
@@ -910,7 +900,7 @@ static void RxData(lora_AppData_t *AppData)
 			// Feedback packet: accept_flag=1 means receiver is sending back DO/RO states
 			if(AppData->Buff[2] == 0x01)  // accept_flag=1 in received packet
 			{
-				PPRINTF("DEBUG: Before feedback processing - queue pending: %d\r\n", di_queue_has_pending());
+				PPRINTF_VERBOSE("Queue check: pending=%d\r\n", di_queue_has_pending());
 				
 				// NEW ARCHITECTURE: Receiver sends only RO states (DO is local on receiver)
 				// Byte 3: RO1_flag<<4 | RO2_flag (changed from DO1/DO2)
@@ -925,10 +915,7 @@ static void RxData(lora_AppData_t *AppData)
 				uint8_t received_RO1 = received_RO1_byte3;
 				uint8_t received_RO2 = received_RO2_byte3;
 				
-				PPRINTF("\r\n=== FEEDBACK RECEIVED ===\r\n");
-				PPRINTF("Remote RO1: %d → Mirroring to local DO1/RO1\r\n", received_RO1);
-				PPRINTF("Remote RO2: %d → Mirroring to local DO2/RO2\r\n", received_RO2);
-				PPRINTF("(Receiver's DOs are local-only, not sent in feedback)\r\n");
+				PPRINTF("RX Feedback: RO1=%d, RO2=%d\r\n", received_RO1, received_RO2);
 				
 				// NEW ARCHITECTURE - Mirror receiver's RO states to transmitter's DO/RO outputs
 				// Transmitter's DO1 mirrors receiver's RO1
@@ -961,47 +948,31 @@ static void RxData(lora_AppData_t *AppData)
 				RO1_flag = received_RO1;
 				RO2_flag = received_RO2;
 				
-				PPRINTF("Local outputs updated to match receiver!\r\n");
-				PPRINTF("=== Confirmation Complete ===\r\n");
+				PPRINTF_VERBOSE("Mirrored receiver RO states\r\n");
 				
 				// Reset accept_flag on transmitter side
 				accept_flag = 0;
 				
 				// NEW CODE - Process any DI changes that occurred during heartbeat cycle
-				// Don't send immediately - let main loop handle it naturally to avoid timing conflicts
 				if(di_queue_has_pending())
 				{
-					uint32_t queue_age = get_system_tick_ms() - di_queue.change_time;
-					PPRINTF("=== QUEUE PROCESSING ===\r\n");
-					PPRINTF("Queued DI changes detected (age: %lu ms)\r\n", queue_age);
-					PPRINTF("  DI1 changed: %d (state: %d)\r\n", di_queue.di1_changed, di_queue.di1_state);
-					PPRINTF("  DI2 changed: %d (state: %d)\r\n", di_queue.di2_changed, di_queue.di2_state);
+					PPRINTF("Processing queued DI changes (DI1=%d, DI2=%d)\r\n", 
+					        di_queue.di1_changed, di_queue.di2_changed);
 					
-					// CRITICAL FIX: Store queued states for Send_TX() to use
-					// Send_TX() reads current GPIO, but we need to send the QUEUED states
 					use_queued_di_states = true;
 					
-					// Set flags to trigger TX in next main loop iteration
 					if(di_queue.di1_changed)
 					{
 						exitflag1 = 1;
 						queued_di1_state = di_queue.di1_state;
-						PPRINTF("  Setting exitflag1=1 for queued DI1 (state=%d)\r\n", queued_di1_state);
 					}
 					if(di_queue.di2_changed)
 					{
 						exitflag2 = 1;
 						queued_di2_state = di_queue.di2_state;
-						PPRINTF("  Setting exitflag2=1 for queued DI2 (state=%d)\r\n", queued_di2_state);
 					}
 					
-					// Clear queue but let send_exti() handle the actual TX
 					di_queue_clear();
-					PPRINTF("Queue cleared, queued states stored for Send_TX()\r\n");
-				}
-				else
-				{
-					PPRINTF("No queued DI changes to process\r\n");
 				}
 			}
 			break;
@@ -1017,7 +988,7 @@ static void RxData(lora_AppData_t *AppData)
 					// Heartbeats have trigger bytes = 0x00 but still need acknowledgement
 					bool has_triggers = ((AppData->Buff[4]!=0x00)||(AppData->Buff[5]!=0x00)||(AppData->Buff[7]!=0x00)||(AppData->Buff[8]!=0x00));
 					
-					PPRINTF("Received REQUEST packet (has_triggers=%d)\r\n", has_triggers);
+					PPRINTF_VERBOSE("RX Request (triggers=%d)\r\n", has_triggers);
 					
 					// Always process the packet (whether heartbeat or DI-triggered)
 					{
@@ -1038,9 +1009,8 @@ static void RxData(lora_AppData_t *AppData)
 					//   - DO1: Available for future local functions
 					// Only RO1 and RO2 are controlled by transmitter's DI states
 					
-					PPRINTF("Decoupled architecture: DOs are local, only ROs controlled remotely\r\n");
-					PPRINTF("Packet DI states: DI1=%d (level_status1=%d), DI2=%d (level_status2=%d)\r\n",
-					        (AppData->Buff[3]>>4)&0x0f, level_status1, (AppData->Buff[6]>>4)&0x0f, level_status2);
+					PPRINTF_VERBOSE("Decoupled: DO=local, RO=remote\r\n");
+					PPRINTF_VERBOSE("RX: DI1=%d, DI2=%d\r\n", level_status1, level_status2);
 					
 					// Extract DI states from packet
 					uint8_t DI1_received = level_status1;  // DI1 state from transmitter
@@ -1059,7 +1029,8 @@ static void RxData(lora_AppData_t *AppData)
 							if(DI1_received == 1)
 								HAL_GPIO_TogglePin(Relay_GPIO_PORT, Relay_RO1_PIN);
 						}
-						PPRINTF("RO1 mapped from DI1=%d (mapping=%d)\r\n", DI1_received, DIonetoRO);
+						PPRINTF_VERBOSE("RO1: DI1=%d → %s\r\n", DI1_received, 
+						        DIonetoRO==1?"direct":(DIonetoRO==2?"inverse":"toggle"));
 					}
 					
 					if(DItwotoRO != 0)
@@ -1073,13 +1044,14 @@ static void RxData(lora_AppData_t *AppData)
 							if(DI2_received == 1)
 								HAL_GPIO_TogglePin(Relay_GPIO_PORT, Relay_RO2_PIN);
 						}
-						PPRINTF("RO2 mapped from DI2=%d (mapping=%d)\r\n", DI2_received, DItwotoRO);
+						PPRINTF_VERBOSE("RO2: DI2=%d → %s\r\n", DI2_received,
+						        DItwotoRO==1?"direct":(DItwotoRO==2?"inverse":"toggle"));
 					}
 					
 					// Process DI1 trigger (for TIMER feature only)
 					if(AppData->Buff[5]!=0x00)
 					{
-						PPRINTF("DI1 trigger detected (Buff[5]=0x%02x)\r\n", AppData->Buff[5]);
+						PPRINTF_VERBOSE("DI1 trigger: 0x%02x\r\n", AppData->Buff[5]);
 						
 						// Start revert timer if configured
 						if((DI1toRO1_time!=0)&&(DI1toRO1_statu!=0))
@@ -1087,14 +1059,14 @@ static void RxData(lora_AppData_t *AppData)
 							originalstatus[2]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO1_PIN);	
 							TimerSetValue( &RelayONETimer, DI1toRO1_time*1000);  
 							TimerStart( &RelayONETimer);	
-							PPRINTF("RO1 revert timer started (%d sec delay)\r\n", DI1toRO1_time);
+							PPRINTF_VERBOSE("RO1 timer: %ds\r\n", DI1toRO1_time);
 						}
 					}
 					
 					// Process DI2 trigger (for TIMER feature only)
 					if(AppData->Buff[8]!=0x00)
 					{
-						PPRINTF("DI2 trigger detected (Buff[8]=0x%02x)\r\n", AppData->Buff[8]);
+						PPRINTF_VERBOSE("DI2 trigger: 0x%02x\r\n", AppData->Buff[8]);
 						
 						// Start revert timer if configured
 						if((DI2toRO2_time!=0)&&(DI2toRO2_statu!=0))
@@ -1102,7 +1074,7 @@ static void RxData(lora_AppData_t *AppData)
 							originalstatus[3]=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);	
 							TimerSetValue( &RelayTWOTimer, DI2toRO2_time*1000);  
 							TimerStart( &RelayTWOTimer);	
-							PPRINTF("RO2 revert timer started (%d sec delay)\r\n", DI2toRO2_time);
+							PPRINTF_VERBOSE("RO2 timer: %ds\r\n", DI2toRO2_time);
 						}
 					}
 						
@@ -1121,9 +1093,7 @@ static void RxData(lora_AppData_t *AppData)
 					RO2_flag=HAL_GPIO_ReadPin(Relay_GPIO_PORT,Relay_RO2_PIN);		
 
 				// NEW CODE - Enhanced feedback mechanism with GUARANTEED acknowledgement
-				PPRINTF("Request processed - DO1=%d, DO2=%d, RO1=%d, RO2=%d\r\n", 
-				        DO1_flag, DO2_flag, RO1_flag, RO2_flag);
-				PPRINTF("Sending ACK to transmitter (triggers=%d)...\r\n", has_triggers);
+				PPRINTF("RO1=%d, RO2=%d → Sending ACK\r\n", RO1_flag, RO2_flag);
 				
 				// CRITICAL: ALWAYS send acknowledgement for ALL request packets
 				// This ensures transmitter can process its queue reliably (event-driven, no timeouts)
@@ -1131,8 +1101,7 @@ static void RxData(lora_AppData_t *AppData)
 				{
 					// Point-to-point: Send ACK immediately
 					uplink_data_status=1;
-					PPRINTF("P2P: ACK triggered (accept_flag=%d, uplink_data_status=%d)\r\n", 
-					        accept_flag, uplink_data_status);
+					PPRINTF_VERBOSE("ACK queued\r\n");
 				}
 				else
 				{
@@ -1465,7 +1434,7 @@ static void send_exti(void)
 			{
 				PPRINTF("Radio busy during DI1 change - queuing state (sending_flag=%d)\r\n", sending_flag);
 				di_queue_capture_state(1);
-				PPRINTF("DI1 queued - will be sent after feedback cycle\r\n");
+				PPRINTF_VERBOSE("DI1 queued\r\n");
 			}
 			else
 			{
@@ -1618,7 +1587,7 @@ static void send_exti(void)
 				{
 					PPRINTF("Radio busy during DI2 change - queuing state (sending_flag=%d)\r\n", sending_flag);
 					di_queue_capture_state(2);
-					PPRINTF("DI2 queued - will be sent after feedback cycle\r\n");
+					PPRINTF_VERBOSE("DI2 queued\r\n");
 				}
 				else
 				{
@@ -2505,7 +2474,7 @@ static void watchdog_reset(void)
     TimerSetValue(&WatchdogTimer, watchdog.interval_seconds * 1000);
     TimerStart(&WatchdogTimer);
     
-    PPRINTF_VERBOSE("Watchdog reset at %lu ms\r\n", now);
+    // Watchdog reset (silent - no need to log every packet)
     
     // Check if we're recovering from safe state
     if(watchdog.safe_state_active)
