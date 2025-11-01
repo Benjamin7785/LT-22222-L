@@ -506,15 +506,19 @@ int main( void )
 				Radio.SetChannel( tx_signal_freqence );	
 				Radio.SetTxConfig( MODEM_LORA, txp_value, 0, bandwidth_value, tx_spreading_value, codingrate_value,preamble_value, false, true, 0, 0, false, 3000 );	
 				static uint32_t last_printed_counter = 0;
-				uint32_t prev_counter = uplinkcount;
-				uplinkcount++;
 				
 				// Detect if we skipped printing any TXs (UART overflow or silent TXs)
-				if(last_printed_counter > 0 && prev_counter != last_printed_counter + 1)
+				if(last_printed_counter > 0 && uplinkcount != last_printed_counter)
 				{
-					PPRINTF("\r\n!!! MISSED %u TXs (last printed: %u, current: %u) !!!\r\n", 
-					        prev_counter - last_printed_counter - 1, last_printed_counter, prev_counter);
+					uint32_t missed = uplinkcount - last_printed_counter - 1;
+					if(missed > 0 && missed < 1000)  // Sanity check
+					{
+						PPRINTF("\r\n!!! MISSED %u TXs (jump from %u to %u) !!!\r\n", 
+						        missed, last_printed_counter, uplinkcount);
+					}
 				}
+				
+				uplinkcount++;
 				last_printed_counter = uplinkcount;
 				
 				PPRINTF("\r\n***** UpLinkCounter= %u *****\n\r", uplinkcount );
