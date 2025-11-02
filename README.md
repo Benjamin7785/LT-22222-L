@@ -161,11 +161,30 @@ Queued DI changes sent immediately
 
 ## Documentation
 
-- `DI_QUEUE_IMPLEMENTATION.md` - Complete DI state queue documentation
+- **`DUAL_RECEIVER_v1.7.1.md`** - Dual receiver system guide (v1.7.1) ⭐ NEW
+- `DOCUMENTATION.md` - Complete v1.6.0 feature documentation
+- `DI_QUEUE_IMPLEMENTATION.md` - DI state queue technical details
 - `GITHUB_SETUP_GUIDE.md` - Git and GitHub setup instructions
 - Original wiki: http://wiki.dragino.com/xwiki/bin/view/Main/
 
 ## Version History
+
+### v1.7.1 (Nov 2025) - Dual Receiver System ⭐ NEW
+- **1 Transmitter → 2 Receivers** independent control
+- DI1 → Receiver A (Group 1), DI2 → Receiver B (Group 2)
+- Time-division ACK collision avoidance (RX-A: 0ms, RX-B: 500ms)
+- Independent link status indicators (DO1/DO2 on TX)
+- Broadcast heartbeats with staggered ACKs
+- Sequential DI processing (~200ms for both receivers)
+- New `AT+PRESETDUAL` command for quick setup
+- **See `DUAL_RECEIVER_v1.7.1.md` for complete documentation**
+
+### v1.6.0 (Nov 2025) - Watchdog & RO/DO Decoupling
+- Link monitoring watchdog with safe state
+- `AT+WATCHDOG` command for configuration
+- RO/DO decoupling on receiver (RO=remote, DO=local)
+- Improved timestamp accuracy (RTC-based)
+- `AT+PRESETTX` and `AT+PRESETRX` commands
 
 ### v1.4.0 (Nov 2025) - DI Queue Enhancement
 - Added DI state change queue for heartbeat mode
