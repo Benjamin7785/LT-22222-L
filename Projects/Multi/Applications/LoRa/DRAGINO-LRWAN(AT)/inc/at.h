@@ -110,6 +110,7 @@ typedef enum eATEerror
 #define AT_CFG        "+CFG"
 #define AT_PRESETTX   "+PRESETTX"
 #define AT_PRESETRX   "+PRESETRX"
+#define AT_PRESETDUAL "+PRESETDUAL"
 #define AT_WATCHDOG   "+WATCHDOG"
 
 ATEerror_t at_return_ok(const char *param);
@@ -165,6 +166,7 @@ ATEerror_t at_version_get(const char *param);
 ATEerror_t at_CFG_run(const char *param);
 ATEerror_t at_PRESETTX_run(const char *param);
 ATEerror_t at_PRESETRX_run(const char *param);
+ATEerror_t at_PRESETDUAL_run(const char *param);
 ATEerror_t at_WATCHDOG_set(const char *param);
 ATEerror_t at_WATCHDOG_get(const char *param);
 

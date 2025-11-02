@@ -585,6 +585,91 @@ ATEerror_t at_PRESETRX_run(const char *param)
 	return AT_OK;
 }
 
+ATEerror_t at_PRESETDUAL_run(const char *param)
+{
+	PPRINTF("\n\r=== Applying Dual Receiver Transmitter Preset ===\r\n");
+	
+	// Set all parameters for dual receiver transmitter configuration
+	sync_value = 1;
+	txp_value = 8;
+	tx_signal_freqence = 868700000;  // TX on 868.7MHz
+	tx_spreading_value = 12;
+	rx_signal_freqence = 869000000;  // RX on 869MHz
+	rx_spreading_value = 12;
+	bandwidth_value = 0;
+	codingrate_value = 1;
+	APP_TX_DUTYCYCLE = 20000;  // 20-second heartbeat
+	intmode1 = 2;  // DI1: Both edges
+	inttime1 = 50;  // 50ms debounce
+	intmode2 = 2;  // DI2: Both edges
+	inttime2 = 50;  // 50ms debounce
+	
+	// CRITICAL: Dual receiver mode uses group_mode=0, group_mode_id=2
+	// group_mode=0 means point-to-point base mode
+	// group_mode_id=2 means 2 receivers in the system
+	group_mode = 0;
+	group_mode_id = 2;  // 2 receivers (RX-A and RX-B)
+	
+	// Set group ID to 12345678
+	group_id[0] = 0x31;  // '1'
+	group_id[1] = 0x32;  // '2'
+	group_id[2] = 0x33;  // '3'
+	group_id[3] = 0x34;  // '4'
+	group_id[4] = 0x35;  // '5'
+	group_id[5] = 0x36;  // '6'
+	group_id[6] = 0x37;  // '7'
+	group_id[7] = 0x38;  // '8'
+	
+	// Set DI to RO mappings (2 = direct mapping: DI HIGH → RO CLOSE)
+	// DI1 → RX-A → TX RO1
+	// DI2 → RX-B → TX RO2
+	DIonetoDO = 0;  // DO not used in dual mode (reserved for link status)
+	DIonetoRO = 2;  // DI1 → RO1 direct
+	DItwotoDO = 0;  // DO not used in dual mode (reserved for link status)
+	DItwotoRO = 2;  // DI2 → RO2 direct
+	
+	// Set DOROSAVE parameters
+	befor_RODO = 2;
+	RO1_init = 0;
+	RO2_init = 0;
+	DO1_init = 0;  // DO1 will show RX-A link status
+	DO2_init = 0;  // DO2 will show RX-B link status
+	
+	sleep_status = 0;  // DI2SLEEP=0
+	
+	// Watchdog not needed on transmitter (only receivers need it)
+	watchdog.enabled = false;
+	
+	PPRINTF("Dual Receiver Transmitter preset applied successfully!\r\n");
+	PPRINTF("\n\r");
+	PPRINTF("Configuration:\r\n");
+	PPRINTF("  TX: 868.7MHz SF12, RX: 869MHz SF12\r\n");
+	PPRINTF("  TDC: 20000ms (20s heartbeat broadcast)\r\n");
+	PPRINTF("  Group Mode: 0,2 (P2P with 2 receivers)\r\n");
+	PPRINTF("\n\r");
+	PPRINTF("Dual Receiver Mapping:\r\n");
+	PPRINTF("  DI1 → RX-A (Group 1) → TX RO1/DO1\r\n");
+	PPRINTF("  DI2 → RX-B (Group 2) → TX RO2/DO2\r\n");
+	PPRINTF("\n\r");
+	PPRINTF("Link Status Indicators:\r\n");
+	PPRINTF("  DO1: HIGH when RX-A link active and mirrors RX-A RO1 state\r\n");
+	PPRINTF("  DO2: HIGH when RX-B link active and mirrors RX-B RO2 state\r\n");
+	PPRINTF("\n\r");
+	PPRINTF("Receiver Configuration:\r\n");
+	PPRINTF("  RX-A: AT+GROUPMOD=1,1  (Group ID 1)\r\n");
+	PPRINTF("  RX-B: AT+GROUPMOD=1,2  (Group ID 2)\r\n");
+	PPRINTF("  Both: AT+PRESETRX (includes watchdog)\r\n");
+	PPRINTF("\n\r");
+	PPRINTF("Use AT+CFG to verify all settings\r\n");
+	PPRINTF("Saving to flash...\r\n");
+	
+	EEPROM_Store_Config();
+	
+	PPRINTF("\n\r!!! IMPORTANT: Please RESET the device for changes to take full effect !!!\r\n");
+	
+	return AT_OK;
+}
+
 ATEerror_t at_WATCHDOG_set(const char *param)
 {
 	uint8_t enable;

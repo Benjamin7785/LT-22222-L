@@ -418,6 +418,17 @@ static const struct ATCommand_s ATCommand[] =
 	},
 	
 	{
+	  .string = AT_PRESETDUAL,
+    .size_string = sizeof(AT_PRESETDUAL) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_PRESETDUAL ": Apply dual receiver transmitter preset (1 TX → 2 RX)\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_return_error,
+		.run = at_PRESETDUAL_run,
+	},
+	
+	{
 	  .string = AT_WATCHDOG,
     .size_string = sizeof(AT_WATCHDOG) - 1,
 #ifndef NO_HELP

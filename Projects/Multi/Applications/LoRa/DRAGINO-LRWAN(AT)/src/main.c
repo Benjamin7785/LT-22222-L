@@ -1262,6 +1262,14 @@ static void OnTxTimerEvent( void )
   // NEW CODE - Only restart timer and trigger TX if TDC > 0 (heartbeat mode)
   if(APP_TX_DUTYCYCLE > 0)
   {
+    // NEW CODE v1.7.1 - Heartbeat broadcasts to all receivers
+    // Clear active_receiver to ensure broadcast address (0x00)
+    if(dual_rx.dual_mode_enabled)
+    {
+      dual_rx.active_receiver = 0;  // 0 = broadcast to both RX-A and RX-B
+      PPRINTF_VERBOSE("Heartbeat: Broadcasting to RX-A and RX-B\r\n");
+    }
+    
     TimerSetValue( &TxTimer,  APP_TX_DUTYCYCLE );
     TimerStart( &TxTimer);
     uplink_data_status=1;
@@ -1287,27 +1295,56 @@ static void OnAckEvent( void )
 	ack_send_num++;
 	PPRINTF("ACK timeout (attempt %d/5)\r\n", ack_send_num);
 	
-	if(ack_send_num>=5)
+	// NEW CODE v1.7.1 - Dual receiver timeout handling
+	if(dual_rx.dual_mode_enabled && dual_rx.active_receiver != 0)
 	{
-		PPRINTF("Max ACK retries reached - giving up\r\n");
-		TimerStop( &AckTimer );
-		ack_send_num=0;
-		lora_wait_flags=0;	
-		retransmission_flag=0;
+		// Targeted transmission to specific receiver
+		dual_rx_handle_timeout(dual_rx.active_receiver);
+		
+		if(ack_send_num>=4)
+		{
+			PPRINTF("Max ACK retries for RX-%c - giving up\r\n", 
+			        dual_rx.active_receiver==1?'A':'B');
+			TimerStop( &AckTimer );
+			ack_send_num=0;
+			lora_wait_flags=0;	
+			retransmission_flag=0;
+			dual_rx.active_receiver = 0;  // Clear target
+		}
+		else
+		{
+			// Retry to same receiver
+			TimerSetValue( &AckTimer,  6000 );
+			TimerStart( &AckTimer );
+			uplink_data_status=1;
+			retransmission_flag=1;
+		}
 	}
 	else
 	{
-		if((group_mode==0)&&(group_mode_id==0))
-			TimerSetValue( &AckTimer,  6000 );			
+		// Standard mode or broadcast heartbeat
+		if(ack_send_num>=5)
+		{
+			PPRINTF("Max ACK retries reached - giving up\r\n");
+			TimerStop( &AckTimer );
+			ack_send_num=0;
+			lora_wait_flags=0;	
+			retransmission_flag=0;
+		}
 		else
-			TimerSetValue( &AckTimer,  30000 );
-		TimerStart( &AckTimer );
-		
-		PPRINTF("Retransmitting (uplinkcount %u → %u)\r\n", uplinkcount, uplinkcount-1);
-		uplinkcount--;  // Compensate for the increment that will happen in next TX
-		uplink_data_status=1;
-		retransmission_flag=1;
-	}		
+		{
+			if((group_mode==0)&&(group_mode_id==0))
+				TimerSetValue( &AckTimer,  6000 );			
+			else
+				TimerSetValue( &AckTimer,  30000 );
+			TimerStart( &AckTimer );
+			
+			PPRINTF("Retransmitting (uplinkcount %u → %u)\r\n", uplinkcount, uplinkcount-1);
+			uplinkcount--;  // Compensate for the increment that will happen in next TX
+			uplink_data_status=1;
+			retransmission_flag=1;
+		}
+	}
 }
 
 static void AckStartTX(void)
