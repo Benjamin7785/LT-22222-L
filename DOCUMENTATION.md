@@ -840,3 +840,4 @@ Waiting for link recovery (RX active)...
 
 **Original Documentation**: [Dragino Wiki](https://wiki.dragino.com/xwiki/bin/view/Main/%20Point%20to%20Point%20Communication%20of%20LT-22222-L/)
 
+

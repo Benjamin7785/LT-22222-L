@@ -234,6 +234,61 @@ uint8_t latest_di2_state_from_isr = 0;
 bool di1_state_updated_in_isr = false;
 bool di2_state_updated_in_isr = false;
 
+// NEW CODE v1.7.1 - Dual Receiver System
+// Per-receiver state tracking for independent control
+typedef struct {
+    uint8_t address;              // Group ID (1 or 2)
+    uint32_t last_packet_ms;      // Last received packet timestamp (for link monitoring)
+    uint8_t retry_count;          // Current retry attempts for this receiver
+    bool link_active;             // Link status (for DO feedback on TX)
+    bool ack_received;            // ACK status for current transmission
+    uint8_t ro_state;             // Last known RO state from feedback
+    uint32_t ack_delay_ms;        // Staggered ACK timing (0ms for RX-A, 500ms for RX-B)
+    bool enabled;                 // Is this receiver active in the system?
+} receiver_state_t;
+
+// Dual receiver state structure
+typedef struct {
+    receiver_state_t rx_a;        // RX-A (Group 1) - controlled by DI1
+    receiver_state_t rx_b;        // RX-B (Group 2) - controlled by DI2
+    bool di1_queued;              // DI1 change queued for RX-A
+    bool di2_queued;              // DI2 change queued for RX-B
+    uint8_t di1_queued_state;     // Queued DI1 state
+    uint8_t di2_queued_state;     // Queued DI2 state
+    uint8_t active_receiver;      // 0=none, 1=RX-A, 2=RX-B (currently transmitting to)
+    bool dual_mode_enabled;       // Is dual receiver mode active?
+} dual_receiver_state_t;
+
+// Global dual receiver state - initialized in main()
+static dual_receiver_state_t dual_rx = {
+    .rx_a = {
+        .address = 1, 
+        .ack_delay_ms = 0,         // RX-A replies immediately
+        .enabled = false,          // Configured by AT commands
+        .link_active = false,
+        .retry_count = 0,
+        .ack_received = false,
+        .ro_state = 0,
+        .last_packet_ms = 0
+    },
+    .rx_b = {
+        .address = 2,
+        .ack_delay_ms = 500,       // RX-B waits 500ms (staggered ACK for broadcasts)
+        .enabled = false,          // Configured by AT commands
+        .link_active = false,
+        .retry_count = 0,
+        .ack_received = false,
+        .ro_state = 0,
+        .last_packet_ms = 0
+    },
+    .di1_queued = false,
+    .di2_queued = false,
+    .di1_queued_state = 0,
+    .di2_queued_state = 0,
+    .active_receiver = 0,
+    .dual_mode_enabled = false
+};
+
 // Watchdog timer
 static TimerEvent_t WatchdogTimer;
 
@@ -251,6 +306,18 @@ static void di_queue_capture_state(uint8_t di_channel);
 static void di_queue_clear(void);
 static bool di_queue_has_pending(void);
 static void di_queue_process_and_send(void);
+
+// NEW CODE v1.7.1 - Dual Receiver System functions
+static void dual_rx_init(void);
+static void dual_rx_enable(bool enable);
+static void dual_rx_send_to_receiver(uint8_t receiver_id, bool is_trigger);
+static void dual_rx_handle_ack(uint8_t source_address, uint8_t *payload);
+static void dual_rx_handle_timeout(uint8_t receiver_id);
+static void dual_rx_update_link_status(uint8_t receiver_id, bool active);
+static void dual_rx_update_do_indicators(void);
+static void dual_rx_process_queued(void);
+static bool dual_rx_is_busy(void);
+static receiver_state_t* dual_rx_get_receiver(uint8_t receiver_id);
 
 // Non-blocking delay functions
 static void non_blocking_delay_start(non_blocking_delay_t* delay, uint32_t duration_ms, void (*callback)(void));
@@ -420,6 +487,9 @@ int main( void )
 	
 	// NEW CODE - Initialize watchdog system (receiver side)
 	watchdog_init();
+	
+	// NEW CODE v1.7.1 - Initialize dual receiver system
+	dual_rx_init();
 	
 	GPIO_EXTI_DI1_IoInit(intmode1);
 	if(sleep_status==0)
@@ -636,13 +706,21 @@ static void Send_TX( void )
 		txDataBuff[i++] = group_id[j];
 	}	
 
-	if(group_mode==0)
+	// NEW CODE v1.7.1 - Dual Receiver Addressing
+	if(dual_rx.dual_mode_enabled && dual_rx.active_receiver != 0)
 	{
-		txDataBuff[i++]= 0x00;
+		// Dual receiver mode - address specific receiver
+		txDataBuff[i++]= dual_rx.active_receiver;  // 1=RX-A, 2=RX-B
+		PPRINTF_VERBOSE("TX → RX-%c (addr=%d)\r\n", 
+		        dual_rx.active_receiver==1?'A':'B', dual_rx.active_receiver);
+	}
+	else if(group_mode==0)
+	{
+		txDataBuff[i++]= 0x00;  // Broadcast (original P2P mode)
 	}
 	else
 	{
-		txDataBuff[i++]= group_mode_id;		
+		txDataBuff[i++]= group_mode_id;  // Group mode (original multipoint)
 	}
 	
 	// CRITICAL FIX: Always set request_flag=1 for transmitter packets (both heartbeat and DI-triggered)
@@ -918,20 +996,35 @@ static void RxData(lora_AppData_t *AppData)
 			{
 				PPRINTF_VERBOSE("Queue check: pending=%d\r\n", di_queue_has_pending());
 				
-				// NEW ARCHITECTURE: Receiver sends only RO states (DO is local on receiver)
-				// Byte 3: RO1_flag<<4 | RO2_flag (changed from DO1/DO2)
-				uint8_t received_RO1_byte3 = (AppData->Buff[3] & 0xf0) >> 4;
-				uint8_t received_RO2_byte3 = (AppData->Buff[3] & 0x0f);
+				// NEW CODE v1.7.1 - Check if this is dual receiver mode
+				uint8_t source_address = AppData->Buff[0];  // Address byte (0=broadcast, 1=RX-A, 2=RX-B)
 				
-				// Byte 6: RO1_flag<<4 | RO2_flag (redundant for verification)
-				uint8_t received_RO1_byte6 = (AppData->Buff[6] & 0xf0) >> 4;
-				uint8_t received_RO2_byte6 = (AppData->Buff[6] & 0x0f);
-				
-				// Use byte 3 values (or verify against byte 6 for corruption detection)
-				uint8_t received_RO1 = received_RO1_byte3;
-				uint8_t received_RO2 = received_RO2_byte3;
-				
-				PPRINTF("RX Feedback: RO1=%d, RO2=%d\r\n", received_RO1, received_RO2);
+				if(dual_rx.dual_mode_enabled && (source_address == 1 || source_address == 2))
+				{
+					// Dual receiver mode - route feedback to specific RO/DO
+					dual_rx_handle_ack(source_address, AppData->Buff);
+					
+					// Process any queued DI changes for the other receiver
+					dual_rx_process_queued();
+				}
+				else
+				{
+					// Standard mode - original feedback handling
+					
+					// NEW ARCHITECTURE: Receiver sends only RO states (DO is local on receiver)
+					// Byte 3: RO1_flag<<4 | RO2_flag (changed from DO1/DO2)
+					uint8_t received_RO1_byte3 = (AppData->Buff[3] & 0xf0) >> 4;
+					uint8_t received_RO2_byte3 = (AppData->Buff[3] & 0x0f);
+					
+					// Byte 6: RO1_flag<<4 | RO2_flag (redundant for verification)
+					uint8_t received_RO1_byte6 = (AppData->Buff[6] & 0xf0) >> 4;
+					uint8_t received_RO2_byte6 = (AppData->Buff[6] & 0x0f);
+					
+					// Use byte 3 values (or verify against byte 6 for corruption detection)
+					uint8_t received_RO1 = received_RO1_byte3;
+					uint8_t received_RO2 = received_RO2_byte3;
+					
+					PPRINTF("RX Feedback: RO1=%d, RO2=%d\r\n", received_RO1, received_RO2);
 				
 				// NEW ARCHITECTURE - Mirror receiver's RO states to transmitter's DO/RO outputs
 				// Transmitter's DO1 mirrors receiver's RO1
@@ -990,6 +1083,7 @@ static void RxData(lora_AppData_t *AppData)
 					
 					di_queue_clear();
 				}
+				}  // End standard mode feedback handling
 			}
 			break;
 		}
@@ -1111,17 +1205,36 @@ static void RxData(lora_AppData_t *AppData)
 				// NEW CODE - Enhanced feedback mechanism with GUARANTEED acknowledgement
 				PPRINTF("RO1=%d, RO2=%d → Sending ACK\r\n", RO1_flag, RO2_flag);
 				
+				// NEW CODE v1.7.1 - Staggered ACK for dual receiver mode
+				// RX-A (group_mode_id=1) replies immediately
+				// RX-B (group_mode_id=2) waits 500ms to avoid collision
+				uint32_t ack_delay_ms = 0;
+				
+				if(group_mode==1 && group_mode_id==2)
+				{
+					// RX-B: Staggered ACK (500ms delay)
+					ack_delay_ms = 500;
+					PPRINTF_VERBOSE("RX-B: Delaying ACK by %lu ms\r\n", ack_delay_ms);
+					DelayMs(ack_delay_ms);
+				}
+				
 				// CRITICAL: ALWAYS send acknowledgement for ALL request packets
 				// This ensures transmitter can process its queue reliably (event-driven, no timeouts)
 				if(group_mode_id <= 1)
 				{
-					// Point-to-point: Send ACK immediately
+					// Point-to-point or RX-A: Send ACK immediately (after any delay above)
 					uplink_data_status=1;
 					PPRINTF_VERBOSE("ACK queued\r\n");
 				}
+				else if(group_mode_id == 2)
+				{
+					// RX-B: Send ACK after 500ms delay
+					uplink_data_status=1;
+					PPRINTF_VERBOSE("ACK queued (delayed)\r\n");
+				}
 				else
 				{
-					// Group mode: Use non-blocking delay to avoid collisions
+					// Group mode (3+ receivers): Use non-blocking delay to avoid collisions
 					non_blocking_delay_start(&rx_window_delay, 1000, rx_window_callback);
 					PPRINTF("Group mode: Feedback delayed by %dms\r\n", 1000 + (group_mode_id-1)*2500);
 				}
@@ -1397,6 +1510,13 @@ static void send_exti(void)
 		{	
 			if(group_mode==0)
 			{
+				// NEW CODE v1.7.1 - Set target receiver for dual receiver mode
+				if(dual_rx.dual_mode_enabled)
+				{
+					dual_rx.active_receiver = 1;  // DI1 → RX-A
+					PPRINTF_VERBOSE("DI1 trigger → targeting RX-A\r\n");
+				}
+				
 				// CRITICAL FIX: Reset heartbeat timer when DI activity occurs
 				// This prevents heartbeat from interfering with DI-triggered feedback cycles
 				if(APP_TX_DUTYCYCLE > 0)
@@ -1550,6 +1670,13 @@ static void send_exti(void)
 			{	
 				if(group_mode==0)
 				{
+					// NEW CODE v1.7.1 - Set target receiver for dual receiver mode
+					if(dual_rx.dual_mode_enabled)
+					{
+						dual_rx.active_receiver = 2;  // DI2 → RX-B
+						PPRINTF_VERBOSE("DI2 trigger → targeting RX-B\r\n");
+					}
+					
 					// CRITICAL FIX: Reset heartbeat timer when DI activity occurs
 					// This prevents heartbeat from interfering with DI-triggered feedback cycles
 					if(APP_TX_DUTYCYCLE > 0)
@@ -2724,6 +2851,351 @@ static void watchdog_check(void)
         {
             PPRINTF("Watchdog: Link OK (last signal: %lu ms ago)\r\n", time_since_last);
         }
+    }
+}
+
+// ============================================================================
+// NEW CODE v1.7.1 - Dual Receiver System Implementation
+// ============================================================================
+
+/**
+ * @brief Initialize dual receiver system
+ */
+static void dual_rx_init(void)
+{
+    PPRINTF("Dual RX system initialized\r\n");
+    
+    // Check if group mode is configured for dual receiver
+    // group_mode=0, group_mode_id=2 means TX with 2 receivers
+    if(group_mode == 0 && group_mode_id == 2)
+    {
+        dual_rx.dual_mode_enabled = true;
+        dual_rx.rx_a.enabled = true;
+        dual_rx.rx_b.enabled = true;
+        
+        PPRINTF("Dual receiver mode ENABLED (RX-A: Group 1, RX-B: Group 2)\r\n");
+        PPRINTF("  DI1 → RX-A → TX RO1/DO1\r\n");
+        PPRINTF("  DI2 → RX-B → TX RO2/DO2\r\n");
+    }
+    else
+    {
+        dual_rx.dual_mode_enabled = false;
+        dual_rx.rx_a.enabled = false;
+        dual_rx.rx_b.enabled = false;
+        PPRINTF("Dual receiver mode DISABLED (standard mode)\r\n");
+    }
+    
+    // Initialize link status indicators (DO1=RX-A, DO2=RX-B)
+    dual_rx_update_do_indicators();
+}
+
+/**
+ * @brief Enable/disable dual receiver mode
+ */
+static void dual_rx_enable(bool enable)
+{
+    dual_rx.dual_mode_enabled = enable;
+    dual_rx.rx_a.enabled = enable;
+    dual_rx.rx_b.enabled = enable;
+    
+    if(enable)
+    {
+        PPRINTF("Dual receiver mode enabled\r\n");
+    }
+    else
+    {
+        PPRINTF("Dual receiver mode disabled\r\n");
+    }
+}
+
+/**
+ * @brief Send packet to specific receiver
+ * @param receiver_id 1=RX-A, 2=RX-B, 0=broadcast to both
+ * @param is_trigger true if DI-triggered, false if heartbeat
+ */
+static void dual_rx_send_to_receiver(uint8_t receiver_id, bool is_trigger)
+{
+    if(!dual_rx.dual_mode_enabled)
+    {
+        // Standard mode - use normal Send_TX
+        return;
+    }
+    
+    // Mark which receiver we're actively communicating with
+    dual_rx.active_receiver = receiver_id;
+    
+    PPRINTF_VERBOSE("Sending to RX-%c (%s)\r\n", 
+            receiver_id==1?'A':(receiver_id==2?'B':'broadcast'),
+            is_trigger?"trigger":"heartbeat");
+    
+    // Prepare packet data - will be handled by modified Send_TX
+    // The address byte will be set based on dual_rx.active_receiver
+    
+    // Normal Send_TX will be called by the state machine
+}
+
+/**
+ * @brief Handle ACK from receiver
+ * @param source_address Group ID from feedback packet (1 or 2)
+ * @param payload Received payload data
+ */
+static void dual_rx_handle_ack(uint8_t source_address, uint8_t *payload)
+{
+    if(!dual_rx.dual_mode_enabled)
+    {
+        return;  // Standard mode handling
+    }
+    
+    receiver_state_t *rx = dual_rx_get_receiver(source_address);
+    if(rx == NULL || !rx->enabled)
+    {
+        PPRINTF("WARNING: ACK from unknown/disabled receiver %d\r\n", source_address);
+        return;
+    }
+    
+    // Mark ACK received
+    rx->ack_received = true;
+    rx->last_packet_ms = get_system_tick_ms();
+    rx->link_active = true;
+    rx->retry_count = 0;
+    
+    // Extract RO state from feedback (byte 3 for RO1/RO2)
+    uint8_t ro1_state = (payload[3] & 0xf0) >> 4;
+    uint8_t ro2_state = (payload[3] & 0x0f);
+    
+    if(source_address == 1)  // RX-A
+    {
+        // RX-A controls TX RO1 and DO1
+        rx->ro_state = ro1_state;
+        
+        // Update TX RO1
+        if(ro1_state == 1)
+            HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_SET);
+        else
+            HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);
+        
+        // Update DO1 (link status - now also mirrors RO state)
+        if(ro1_state == 1)
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);
+        else
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+        
+        PPRINTF("RX-A ACK: RO1=%d → TX RO1=%d, DO1=%d\r\n", ro1_state, ro1_state, ro1_state);
+    }
+    else if(source_address == 2)  // RX-B
+    {
+        // RX-B controls TX RO2 and DO2
+        rx->ro_state = ro2_state;
+        
+        // Update TX RO2
+        if(ro2_state == 1)
+            HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_SET);
+        else
+            HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
+        
+        // Update DO2 (link status - now also mirrors RO state)
+        if(ro2_state == 1)
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+        else
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+        
+        PPRINTF("RX-B ACK: RO2=%d → TX RO2=%d, DO2=%d\r\n", ro2_state, ro2_state, ro2_state);
+    }
+    
+    // Update DO indicators to show link is active
+    dual_rx_update_do_indicators();
+    
+    // Clear active receiver flag
+    dual_rx.active_receiver = 0;
+}
+
+/**
+ * @brief Handle ACK timeout for specific receiver
+ * @param receiver_id 1=RX-A, 2=RX-B
+ */
+static void dual_rx_handle_timeout(uint8_t receiver_id)
+{
+    if(!dual_rx.dual_mode_enabled)
+    {
+        return;
+    }
+    
+    receiver_state_t *rx = dual_rx_get_receiver(receiver_id);
+    if(rx == NULL || !rx->enabled)
+    {
+        return;
+    }
+    
+    rx->retry_count++;
+    
+    if(rx->retry_count >= 4)
+    {
+        // Mark link as lost after 4 retries
+        dual_rx_update_link_status(receiver_id, false);
+        
+        PPRINTF("=== RX-%c LINK LOST (4 retries failed) ===\r\n", 
+                receiver_id==1?'A':'B');
+        
+        // Reset retry counter
+        rx->retry_count = 0;
+    }
+    else
+    {
+        // Retry transmission
+        PPRINTF("Retry %d/4 for RX-%c\r\n", rx->retry_count, receiver_id==1?'A':'B');
+        
+        // Retransmission will be handled by existing retry mechanism
+    }
+}
+
+/**
+ * @brief Update link status for a receiver
+ * @param receiver_id 1=RX-A, 2=RX-B
+ * @param active true if link is active, false if lost
+ */
+static void dual_rx_update_link_status(uint8_t receiver_id, bool active)
+{
+    receiver_state_t *rx = dual_rx_get_receiver(receiver_id);
+    if(rx == NULL)
+    {
+        return;
+    }
+    
+    rx->link_active = active;
+    
+    // Update DO indicators
+    dual_rx_update_do_indicators();
+}
+
+/**
+ * @brief Update DO1/DO2 link status indicators
+ * 
+ * In dual receiver mode:
+ * - DO1 is HIGH when RX-A link is active AND mirrors RX-A RO1 state
+ * - DO2 is HIGH when RX-B link is active AND mirrors RX-B RO2 state
+ * - When link is lost, corresponding DO goes LOW (visual indication)
+ */
+static void dual_rx_update_do_indicators(void)
+{
+    if(!dual_rx.dual_mode_enabled)
+    {
+        return;  // Standard mode - DO controlled by other logic
+    }
+    
+    // DO1 indicates RX-A link status
+    if(dual_rx.rx_a.enabled)
+    {
+        if(dual_rx.rx_a.link_active)
+        {
+            // Link active - DO1 mirrors RO state
+            // (already set in dual_rx_handle_ack, just ensure it's correct)
+        }
+        else
+        {
+            // Link lost - DO1 LOW
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+            PPRINTF_VERBOSE("DO1=LOW (RX-A link lost)\r\n");
+        }
+    }
+    
+    // DO2 indicates RX-B link status
+    if(dual_rx.rx_b.enabled)
+    {
+        if(dual_rx.rx_b.link_active)
+        {
+            // Link active - DO2 mirrors RO state
+            // (already set in dual_rx_handle_ack, just ensure it's correct)
+        }
+        else
+        {
+            // Link lost - DO2 LOW
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+            PPRINTF_VERBOSE("DO2=LOW (RX-B link lost)\r\n");
+        }
+    }
+}
+
+/**
+ * @brief Process queued DI changes for dual receiver mode
+ * 
+ * DI1 changes are sent to RX-A
+ * DI2 changes are sent to RX-B
+ */
+static void dual_rx_process_queued(void)
+{
+    if(!dual_rx.dual_mode_enabled)
+    {
+        // Standard mode - use normal queue processing
+        return;
+    }
+    
+    // Check if DI1 was queued (send to RX-A)
+    if(dual_rx.di1_queued)
+    {
+        PPRINTF("Processing queued DI1 (state=%d) → RX-A\r\n", dual_rx.di1_queued_state);
+        
+        // Set exitflag1 to trigger transmission
+        exitflag1 = 1;
+        queued_di1_state = dual_rx.di1_queued_state;
+        use_queued_di_states = true;
+        
+        // Will be sent to RX-A (address=1)
+        dual_rx.active_receiver = 1;
+        
+        // Clear queue
+        dual_rx.di1_queued = false;
+    }
+    
+    // Check if DI2 was queued (send to RX-B)
+    if(dual_rx.di2_queued)
+    {
+        PPRINTF("Processing queued DI2 (state=%d) → RX-B\r\n", dual_rx.di2_queued_state);
+        
+        // Set exitflag2 to trigger transmission
+        exitflag2 = 1;
+        queued_di2_state = dual_rx.di2_queued_state;
+        use_queued_di_states = true;
+        
+        // Will be sent to RX-B (address=2)
+        dual_rx.active_receiver = 2;
+        
+        // Clear queue
+        dual_rx.di2_queued = false;
+    }
+}
+
+/**
+ * @brief Check if dual receiver system is currently busy
+ * @return true if actively transmitting to a receiver
+ */
+static bool dual_rx_is_busy(void)
+{
+    if(!dual_rx.dual_mode_enabled)
+    {
+        return false;
+    }
+    
+    return (dual_rx.active_receiver != 0);
+}
+
+/**
+ * @brief Get receiver state structure by ID
+ * @param receiver_id 1=RX-A, 2=RX-B
+ * @return Pointer to receiver state, or NULL if invalid
+ */
+static receiver_state_t* dual_rx_get_receiver(uint8_t receiver_id)
+{
+    if(receiver_id == 1)
+    {
+        return &dual_rx.rx_a;
+    }
+    else if(receiver_id == 2)
+    {
+        return &dual_rx.rx_b;
+    }
+    else
+    {
+        return NULL;
     }
 }
 
