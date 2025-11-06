@@ -72,6 +72,83 @@ AT+TXFREQ=869000000  # Set TX frequency (for feedback)
 
 ## Advanced Features
 
+### Bidirectional Watchdog Link Monitoring (v1.6.1)
+
+The watchdog system monitors the communication link between transmitter and receiver, providing visual indicators and automatic safe-state activation when the link is lost.
+
+#### How It Works
+
+**Transmitter Mode (TDC > 0)**:
+- Monitors if receiver sends ACK/feedback to heartbeat packets
+- If no ACK received for `interval × max_missed` seconds → **DO1 = HIGH** (link lost indicator)
+- When ACK received again → **DO1 restored** to normal operation (mirrors receiver's RO1)
+
+**Receiver Mode (TDC = 0)**:
+- Monitors if transmitter sends heartbeat packets
+- If no heartbeat for `interval × max_missed` seconds → **Safe state** (RO1/RO2=LOW, DO2=HIGH)
+- When heartbeat resumes → **DO2 = LOW**, RO outputs restored
+
+#### Configuration
+
+Both transmitter and receiver use the **same watchdog parameters** (synchronized monitoring):
+
+```bash
+# Enable watchdog with 20-second interval, max 3 missed packets
+AT+WATCHDOG=20,3
+
+# This means:
+# - Check every 20 seconds
+# - Trigger after 3 missed checks (60 seconds total)
+
+# Disable watchdog
+AT+WATCHDOG=0,0
+```
+
+#### Example Scenarios
+
+**Scenario 1: Receiver Powered Off**
+```
+TX Console:
+  Watchdog: No packet for 20000 ms (missed: 1/3)
+  Watchdog: No packet for 40000 ms (missed: 2/3)
+  Watchdog: No packet for 60000 ms (missed: 3/3)
+  === LINK LOST ===
+  TX: No ACK from receiver - Setting DO1=HIGH
+  [DO1 LED turns ON → visual indication receiver is offline]
+  
+  ... receiver powers back on ...
+  
+  === LINK RESTORED ===
+  TX: DO1 indicator OFF - receiver responding
+  [DO1 LED returns to normal operation]
+```
+
+**Scenario 2: Transmitter Powered Off**
+```
+RX Console:
+  Watchdog: No packet for 20000 ms (missed: 1/3)
+  Watchdog: No packet for 40000 ms (missed: 2/3)
+  Watchdog: No packet for 60000 ms (missed: 3/3)
+  === LINK LOST ===
+  RX: No heartbeat from transmitter - Setting RO1=LOW, RO2=LOW, DO2=HIGH
+  [RO relays turn OFF → safe state]
+  [DO2 LED turns ON → visual indication transmitter is offline]
+  
+  ... transmitter powers back on ...
+  
+  === LINK RESTORED ===
+  RX: DO2 indicator OFF - transmitter heartbeat restored
+  [RO relays return to normal operation]
+```
+
+#### Benefits
+
+- ✅ **Bidirectional monitoring**: Both sides know when the other is offline
+- ✅ **Automatic safe state**: Receiver safely turns off relays when transmitter fails
+- ✅ **Visual indicators**: DO1 (TX) and DO2 (RX) show link status at a glance
+- ✅ **Unified configuration**: One command configures both sides
+- ✅ **Auto-recovery**: Link automatically restores when communication resumes
+
 ### DI State Queue (Heartbeat Mode)
 When using `AT+TDC>0` (heartbeat mode), DI changes during heartbeat cycles are automatically queued and sent immediately after feedback:
 
@@ -166,6 +243,24 @@ Queued DI changes sent immediately
 - Original wiki: http://wiki.dragino.com/xwiki/bin/view/Main/
 
 ## Version History
+
+### v1.6.1 (Nov 2025) - Bidirectional Watchdog Monitoring
+- **Transmitter watchdog**: Monitors receiver ACK/feedback packets
+  - Visual indicator: DO1=HIGH when receiver stops responding
+  - Automatic recovery when receiver comes back online
+- **Receiver watchdog**: Monitors transmitter heartbeat packets (from v1.6.0)
+  - Safe state: RO1/RO2=LOW, DO2=HIGH when transmitter stops sending
+  - Automatic recovery when transmitter resumes
+- **Unified configuration**: Same `AT+WATCHDOG` parameters for both TX and RX
+- **Auto-detection**: Automatically adapts to TDC mode (transmitter vs receiver)
+
+### v1.6.0 (Nov 2025) - Watchdog Link Monitoring (Receiver)
+- Receiver-side watchdog for transmitter heartbeat monitoring
+- Configurable interval and max missed packets (`AT+WATCHDOG=<interval>,<max_missed>`)
+- Safe state activation (RO1/RO2=LOW, DO2=HIGH) when link lost
+- Automatic recovery when link restored
+- RTC-based timing (works during low-power STOP mode)
+- Fixed uplink counter diagnostics and timestamp corruption
 
 ### v1.4.0 (Nov 2025) - DI Queue Enhancement
 - Added DI state change queue for heartbeat mode

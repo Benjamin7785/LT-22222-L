@@ -191,7 +191,14 @@ typedef struct {
     bool safe_state_active;
 } watchdog_t;
 
-// NEW CODE - Watchdog system for link monitoring
+// NEW CODE - Watchdog system for bidirectional link monitoring (v1.6.1)
+// TRANSMITTER (TDC>0): Monitors receiver ACK/feedback packets
+//   - If no ACK received for (interval_seconds × max_missed) → DO1=HIGH (link lost)
+//   - When ACK received → DO1=LOW, resume normal operation
+// RECEIVER (TDC=0): Monitors transmitter heartbeat packets
+//   - If no heartbeat for (interval_seconds × max_missed) → RO1/RO2=LOW, DO2=HIGH (safe state)
+//   - When heartbeat received → DO2=LOW, resume normal operation
+// Both modes use the SAME watchdog parameters (configured via AT+WATCHDOG)
 watchdog_t watchdog = {
     .enabled = false,                // OFF by default (as requested)
     .interval_seconds = 10,          // 10 second default
@@ -934,6 +941,7 @@ static void RxData(lora_AppData_t *AppData)
 				PPRINTF("RX Feedback: RO1=%d, RO2=%d\r\n", received_RO1, received_RO2);
 				
 				// NEW ARCHITECTURE - Mirror receiver's RO states to transmitter's DO/RO outputs
+				// v1.6.1: This also restores DO1 after watchdog link recovery (DO1 was HIGH during link lost)
 				// Transmitter's DO1 mirrors receiver's RO1
 				if(received_RO1 == 1)
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);
@@ -2403,6 +2411,16 @@ void test_run_comprehensive_test(void)
 }
 
 // NEW CODE - Watchdog System Implementation
+/**
+ * @brief Initialize bidirectional watchdog link monitor (v1.6.1)
+ * 
+ * Configures watchdog for both transmitter and receiver modes:
+ * - TRANSMITTER (TDC>0): Monitors if receiver sends ACK/feedback
+ * - RECEIVER (TDC=0): Monitors if transmitter sends heartbeats
+ * 
+ * Both use the same parameters (interval_seconds, max_missed) for synchronized monitoring.
+ * The watchdog automatically detects the mode based on APP_TX_DUTYCYCLE (TDC setting).
+ */
 static void watchdog_init(void)
 {
     // Always initialize timer structure
@@ -2422,6 +2440,15 @@ static void watchdog_init(void)
         
         PPRINTF("Watchdog enabled: %d second interval, max %d missed\r\n", 
                 watchdog.interval_seconds, watchdog.max_missed);
+        
+        if(APP_TX_DUTYCYCLE > 0)
+        {
+            PPRINTF("Mode: TRANSMITTER - Monitoring receiver ACK (DO1 indicator)\r\n");
+        }
+        else
+        {
+            PPRINTF("Mode: RECEIVER - Monitoring transmitter heartbeat (DO2 indicator)\r\n");
+        }
     }
     else
     {
@@ -2499,30 +2526,65 @@ static void watchdog_reset(void)
         watchdog.safe_state_active = false;
         watchdog.link_active = true;
         
-        // Turn off DO2 indicator
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-        PPRINTF("DO2 indicator OFF - link recovered\r\n");
-        
-        // RO outputs will be updated by current packet
+        if(APP_TX_DUTYCYCLE > 0)
+        {
+            // TRANSMITTER MODE - Clear DO1 indicator
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+            DO1_flag = 0;
+            PPRINTF("TX: DO1 indicator OFF - receiver responding\r\n");
+            
+            // DO/RO outputs will be updated by feedback packet
+        }
+        else
+        {
+            // RECEIVER MODE - Clear DO2 indicator
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+            PPRINTF("RX: DO2 indicator OFF - transmitter heartbeat restored\r\n");
+            
+            // RO outputs will be updated by current packet
+        }
     }
 }
 
 static void watchdog_trigger_safe_state(void)
 {
-    // SIMPLE: Just set outputs and flag, don't stop anything
+    // NEW CODE v1.6.1 - Bidirectional watchdog monitoring
+    // Transmitter (TDC>0): Monitors if receiver ACKs heartbeats → DO1 indicator
+    // Receiver (TDC=0): Monitors if transmitter sends heartbeats → DO2 indicator + safe state
+    
     PPRINTF("\r\n=== LINK LOST ===\r\n");
-    PPRINTF("Setting RO1=LOW, RO2=LOW, DO2=HIGH\r\n");
     
-    // Set RO outputs to LOW (safe state)
-    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
-    
-    // DO2 = Visual indicator
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-    
-    // Update state variables
-    RO1_flag = 0;
-    RO2_flag = 0;
+    if(APP_TX_DUTYCYCLE > 0)
+    {
+        // TRANSMITTER MODE (TDC > 0)
+        // Receiver is not responding to heartbeats
+        // Visual indicator: DO1 = HIGH (link lost)
+        PPRINTF("TX: No ACK from receiver - Setting DO1=HIGH (link lost indicator)\r\n");
+        
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);  // DO1 = HIGH
+        DO1_flag = 1;
+        
+        // Note: RO outputs remain in last known state (don't force to LOW on transmitter)
+        // This allows the system to maintain outputs until link is restored
+    }
+    else
+    {
+        // RECEIVER MODE (TDC = 0)
+        // Transmitter stopped sending heartbeats
+        // Safe state: RO outputs to LOW, DO2 visual indicator
+        PPRINTF("RX: No heartbeat from transmitter - Setting RO1=LOW, RO2=LOW, DO2=HIGH\r\n");
+        
+        // Set RO outputs to LOW (safe state)
+        HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO1_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
+        
+        // DO2 = Visual indicator
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+        
+        // Update state variables
+        RO1_flag = 0;
+        RO2_flag = 0;
+    }
     
     watchdog.safe_state_active = true;
     watchdog.link_active = false;
