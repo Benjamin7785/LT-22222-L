@@ -940,19 +940,13 @@ static void RxData(lora_AppData_t *AppData)
 				
 				PPRINTF("RX Feedback: RO1=%d, RO2=%d\r\n", received_RO1, received_RO2);
 				
-				// NEW ARCHITECTURE - Mirror receiver's RO states to transmitter's DO/RO outputs
-				// v1.6.1: This also restores DO1 after watchdog link recovery (DO1 was HIGH during link lost)
-				// Transmitter's DO1 mirrors receiver's RO1
-				if(received_RO1 == 1)
-					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);
-				else
-					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+				// NEW ARCHITECTURE v1.6.1 - Decoupled DO and RO on Transmitter
+				// DO outputs are LOCAL-ONLY (not controlled by receiver feedback):
+				//   - DO1: Watchdog link lost indicator (controlled by watchdog system)
+				//   - DO2: Available for future local functions
+				// Only RO1 and RO2 mirror receiver's RO states (remote control)
 				
-				// Transmitter's DO2 mirrors receiver's RO2
-				if(received_RO2 == 1)
-					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-				else
-					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+				PPRINTF_VERBOSE("Decoupled: TX DO=local, RO=remote\r\n");
 				
 				// Transmitter's RO1 mirrors receiver's RO1
 				if(received_RO1 == 1)
@@ -966,13 +960,11 @@ static void RxData(lora_AppData_t *AppData)
 				else
 					HAL_GPIO_WritePin(Relay_GPIO_PORT, Relay_RO2_PIN, GPIO_PIN_RESET);
 				
-				// Update local state variables
-				DO1_flag = received_RO1;  // Transmitter DO mirrors receiver RO
-				DO2_flag = received_RO2;
+				// Update RO state variables (DO flags remain unchanged - local control)
 				RO1_flag = received_RO1;
 				RO2_flag = received_RO2;
 				
-				PPRINTF_VERBOSE("Mirrored receiver RO states\r\n");
+				PPRINTF_VERBOSE("Mirrored receiver RO states (DO outputs independent)\r\n");
 				
 				// Reset accept_flag on transmitter side
 				accept_flag = 0;
@@ -2528,12 +2520,12 @@ static void watchdog_reset(void)
         
         if(APP_TX_DUTYCYCLE > 0)
         {
-            // TRANSMITTER MODE - Clear DO1 indicator
+            // TRANSMITTER MODE - Clear DO1 indicator (local control)
             HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
             DO1_flag = 0;
             PPRINTF("TX: DO1 indicator OFF - receiver responding\r\n");
             
-            // DO/RO outputs will be updated by feedback packet
+            // RO outputs will be updated by feedback packet (DO outputs are local/independent)
         }
         else
         {

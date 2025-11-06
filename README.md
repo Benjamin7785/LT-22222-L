@@ -253,6 +253,11 @@ Queued DI changes sent immediately
   - Automatic recovery when transmitter resumes
 - **Unified configuration**: Same `AT+WATCHDOG` parameters for both TX and RX
 - **Auto-detection**: Automatically adapts to TDC mode (transmitter vs receiver)
+- **Decoupled DO/RO outputs**: 
+  - Transmitter: DO outputs are local-only (DO1=watchdog indicator, DO2=available)
+  - Transmitter: RO outputs mirror receiver's RO states (remote feedback)
+  - Receiver: DO outputs are local-only (DO2=watchdog indicator, DO1=available)
+  - Receiver: RO outputs controlled by transmitter's DI states
 
 ### v1.6.0 (Nov 2025) - Watchdog Link Monitoring (Receiver)
 - Receiver-side watchdog for transmitter heartbeat monitoring
